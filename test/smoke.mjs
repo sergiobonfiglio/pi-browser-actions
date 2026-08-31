@@ -8,11 +8,12 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const cli = require.resolve("@playwright/cli/playwright-cli.js");
-const extensionDirectory = dirname(fileURLToPath(import.meta.url));
-const forbiddenOutput = join(extensionDirectory, ".playwright-cli");
+const repositoryDirectory = dirname(dirname(fileURLToPath(import.meta.url)));
+const forbiddenOutput = join(repositoryDirectory, ".playwright-cli");
 const existedBefore = existsSync(forbiddenOutput);
-const workspace = mkdtempSync(join(tmpdir(), "pi-headless-browser-smoke-"));
+const workspace = mkdtempSync(join(tmpdir(), "pi-browser-actions-smoke-"));
 const session = `smoke-${randomUUID().slice(0, 8)}`;
+const headed = process.argv.includes("--headed");
 mkdirSync(join(workspace, "artifacts"), { recursive: true });
 
 const env = {
@@ -35,14 +36,16 @@ function run(args) {
 }
 
 try {
-	run([`-s=${session}`, "open", "data:text/html,<button>Temporary browser</button>"]);
+	const openArgs = [`-s=${session}`, "open", "data:text/html,<button>Temporary browser</button>"];
+	if (headed) openArgs.push("--headed");
+	run(openArgs);
 	const snapshot = run([`-s=${session}`, "snapshot"]);
 	if (!snapshot.includes('button "Temporary browser"')) throw new Error("snapshot did not contain the test button");
 	run([`-s=${session}`, "screenshot", "--filename=artifacts/smoke.png"]);
 	if (!existsSync(join(workspace, "artifacts/smoke.png"))) throw new Error("screenshot was not created in temp workspace");
 	if (!existsSync(join(workspace, ".playwright-cli"))) throw new Error("automatic snapshots were not created in temp workspace");
 	if (!existedBefore && existsSync(forbiddenOutput)) throw new Error("Playwright polluted the extension directory");
-	console.log(`ok: browser output stayed in ${workspace}`);
+	console.log(`ok: ${headed ? "headed" : "headless"} browser output stayed in ${workspace}`);
 } finally {
 	try {
 		run([`-s=${session}`, "close"]);

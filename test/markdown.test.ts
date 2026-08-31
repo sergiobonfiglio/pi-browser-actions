@@ -8,7 +8,7 @@ import {
 	parseRenderedPageData,
 	readRenderedPageDataFile,
 	renderedPageToMarkdown,
-} from "./markdown.ts";
+} from "../src/markdown.ts";
 
 const ARTICLE_HTML = `<!doctype html>
 <html>
@@ -56,7 +56,7 @@ describe("rendered page Markdown extraction", () => {
 	});
 
 	it("rejects oversized capture files before parsing JSON", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "headless-browser-markdown-test-"));
+		const directory = await mkdtemp(join(tmpdir(), "pi-browser-actions-markdown-test-"));
 		const path = join(directory, "rendered-page.json");
 		try {
 			await writeFile(path, "x".repeat(MAX_RENDERED_PAGE_DATA_BYTES + 1));

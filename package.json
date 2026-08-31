@@ -1,15 +1,59 @@
 {
-  "name": "headless-browser",
-  "private": true,
+  "name": "pi-browser-actions",
+  "version": "1.0.0",
+  "description": "Stateful Playwright browser automation for Pi with headed or headless launch, browser attachment, web search, rendering, and Markdown extraction.",
   "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "browser",
+    "playwright",
+    "automation",
+    "web-search"
+  ],
+  "exports": "./index.ts",
+  "files": [
+    "index.ts",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sergiobonfiglio/pi-browser-actions.git"
+  },
+  "homepage": "https://github.com/sergiobonfiglio/pi-browser-actions#readme",
+  "bugs": {
+    "url": "https://github.com/sergiobonfiglio/pi-browser-actions/issues"
+  },
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
     "setup": "playwright install chromium",
+    "setup:ci": "playwright install --with-deps chromium",
     "setup:browsers": "playwright install chromium firefox webkit",
     "setup:edge": "playwright install msedge",
-    "smoke": "node smoke.mjs"
+    "smoke": "node test/smoke.mjs",
+    "smoke:attach": "node test/attach-smoke.mjs",
+    "smoke:headed": "node test/smoke.mjs --headed",
+    "pack:dry": "npm pack --dry-run",
+    "release:check": "npm run check && npm run test && npm run smoke && npm run smoke:attach && npm run pack:dry",
+    "publish:public": "npm publish --access public"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",
@@ -17,13 +61,11 @@
     "jsdom": "30.0.1",
     "turndown": "7.2.4"
   },
-  "pi": {
-    "extensions": [
-      "./index.ts"
-    ]
-  },
   "devDependencies": {
     "@types/jsdom": "30.0.0",
-    "@types/turndown": "5.0.6"
+    "@types/node": "^24.0.0",
+    "@types/turndown": "5.0.6",
+    "typescript": "^5.0.0",
+    "vitest": "^3.2.4"
   }
 }

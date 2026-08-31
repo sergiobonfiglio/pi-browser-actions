@@ -8,8 +8,9 @@ import {
 	cliEnvironment,
 	createBrowserWorkspace,
 	removeBrowserWorkspace,
+	releaseActionForOwnership,
 	runCliProcess,
-} from "./runtime.ts";
+} from "../src/runtime.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -17,7 +18,7 @@ afterEach(async () => {
 	await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-describe("headless browser isolation", () => {
+describe("browser workspace isolation", () => {
 	it("runs child processes and daemon state inside an OS temporary workspace", async () => {
 		const workspace = await createBrowserWorkspace();
 		temporaryDirectories.push(workspace);
@@ -45,26 +46,33 @@ describe("headless browser isolation", () => {
 		await expect(access(workspace)).rejects.toThrow();
 	});
 
-	it("closes only its named session before removing the workspace", async () => {
-		const workspace = await createBrowserWorkspace();
+	it("releases only its named session before removing the workspace", async () => {
 		const recorder = await createBrowserWorkspace();
-		temporaryDirectories.push(workspace, recorder);
+		temporaryDirectories.push(recorder);
 		const callsPath = join(recorder, "calls.jsonl");
-		const scriptPath = join(workspace, "fake-cli.mjs");
-		await writeFile(
-			scriptPath,
-			`import fs from "node:fs"; fs.appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(process.argv.slice(2)) + "\\n");`,
-			"utf8",
-		);
 
-		await cleanupBrowserWorkspace(scriptPath, "pi-test-session", workspace);
+		for (const releaseAction of ["close", "detach"] as const) {
+			const workspace = await createBrowserWorkspace();
+			temporaryDirectories.push(workspace);
+			const scriptPath = join(workspace, "fake-cli.mjs");
+			await writeFile(
+				scriptPath,
+				`import fs from "node:fs"; fs.appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(process.argv.slice(2)) + "\\n");`,
+				"utf8",
+			);
 
-		await expect(access(workspace)).rejects.toThrow();
+			await cleanupBrowserWorkspace(scriptPath, "pi-test-session", workspace, releaseAction);
+			await expect(access(workspace)).rejects.toThrow();
+		}
+
 		const calls = (await readFile(callsPath, "utf8"))
 			.trim()
 			.split("\n")
 			.map((line) => JSON.parse(line));
-		expect(calls).toEqual([["-s=pi-test-session", "close"]]);
+		expect(calls).toEqual([
+			["-s=pi-test-session", "close"],
+			["-s=pi-test-session", "detach"],
+		]);
 	});
 
 	it("redirects CLI daemon metadata without changing unrelated environment values", () => {
@@ -75,7 +83,7 @@ describe("headless browser isolation", () => {
 	});
 });
 
-describe("headless browser command mapping", () => {
+describe("browser command mapping", () => {
 	it("maps snapshot and interaction options", () => {
 		expect(
 			buildCliInvocation({ action: "snapshot", target: "e4", depth: 7, boxes: true }, 1, "/project").args,
@@ -83,6 +91,42 @@ describe("headless browser command mapping", () => {
 		expect(
 			buildCliInvocation({ action: "fill", target: "e8", text: "hello world", submit: true }, 2, "/project").args,
 		).toEqual(["fill", "e8", "hello world", "--submit"]);
+	});
+
+	it("maps headed launch and all attachment modes", () => {
+		expect(buildCliInvocation({ action: "open", headed: true }, 1, "/project").args).toEqual([
+			"open",
+			"about:blank",
+			"--headed",
+		]);
+		expect(buildCliInvocation({ action: "attach", name: "shared-browser" }, 1, "/project").args).toEqual([
+			"attach",
+			"shared-browser",
+		]);
+		expect(
+			buildCliInvocation({ action: "attach", cdpEndpoint: "http://localhost:9222" }, 1, "/project").args,
+		).toEqual(["attach", "--cdp=http://localhost:9222"]);
+		expect(
+			buildCliInvocation({ action: "attach", browserServerEndpoint: "ws://localhost:3000" }, 1, "/project").args,
+		).toEqual(["attach", "--endpoint=ws://localhost:3000"]);
+		expect(
+			buildCliInvocation({ action: "attach", attachViaExtension: true, browser: "chrome" }, 1, "/project").args,
+		).toEqual(["attach", "--extension=chrome"]);
+		expect(buildCliInvocation({ action: "detach" }, 1, "/project").args).toEqual(["detach"]);
+		expect(buildCliInvocation({ action: "list_sessions" }, 1, "/project").args).toEqual(["list"]);
+	});
+
+	it("validates attachment targets and ownership release actions", () => {
+		expect(() => buildCliInvocation({ action: "attach" }, 1, "/project")).toThrow("exactly one");
+		expect(() =>
+			buildCliInvocation({ action: "attach", name: "one", cdpEndpoint: "http://localhost:9222" }, 1, "/project"),
+		).toThrow("exactly one");
+		expect(() =>
+			buildCliInvocation({ action: "attach", attachViaExtension: true, browser: "firefox" }, 1, "/project"),
+		).toThrow("only Chrome or Microsoft Edge");
+		expect(releaseActionForOwnership("none")).toBeUndefined();
+		expect(releaseActionForOwnership("launched")).toBe("close");
+		expect(releaseActionForOwnership("attached")).toBe("detach");
 	});
 
 	it("captures rendered HTML to a temporary intermediate file for Markdown conversion", () => {

@@ -6,7 +6,7 @@ import {
 	MAX_SEARCH_RESPONSE_BYTES,
 	parseGoogleSearchPayload,
 	readResponseTextWithLimit,
-} from "./search.ts";
+} from "../src/search.ts";
 
 describe("web search parsing", () => {
 	it("extracts DuckDuckGo HTML results and unwraps redirect URLs", () => {

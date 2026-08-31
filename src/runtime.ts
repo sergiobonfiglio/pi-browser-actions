@@ -6,6 +6,9 @@ import { renderedPageCaptureCode } from "./markdown.ts";
 
 export const BROWSER_ACTIONS = [
 	"open",
+	"attach",
+	"detach",
+	"list_sessions",
 	"goto",
 	"snapshot",
 	"extract_markdown",
@@ -49,6 +52,10 @@ export type BrowserAction = (typeof BROWSER_ACTIONS)[number];
 export interface BrowserParams {
 	action: BrowserAction;
 	url?: string;
+	name?: string;
+	cdpEndpoint?: string;
+	browserServerEndpoint?: string;
+	attachViaExtension?: boolean;
 	target?: string;
 	text?: string;
 	value?: string;
@@ -58,6 +65,7 @@ export interface BrowserParams {
 	button?: "left" | "middle" | "right";
 	browser?: "chrome" | "firefox" | "webkit" | "msedge";
 	device?: string;
+	headed?: boolean;
 	mobile?: boolean;
 	submit?: boolean;
 	depth?: number;
@@ -93,6 +101,9 @@ export interface CliProcessResult {
 	killed: boolean;
 }
 
+export type BrowserOwnership = "none" | "launched" | "attached";
+export type BrowserReleaseAction = "close" | "detach";
+
 const MAX_CAPTURE_BYTES = 10 * 1024 * 1024;
 
 function requireString(value: string | undefined, name: string): string {
@@ -105,9 +116,48 @@ function requireInteger(value: number | undefined, name: string): number {
 	return value as number;
 }
 
+function requireNonEmptyString(value: string | undefined, name: string): string {
+	const result = requireString(value, name).trim();
+	if (!result) throw new Error(`action requires non-empty \`${name}\``);
+	return result;
+}
+
 function projectFile(filePath: string | undefined, projectCwd: string): string {
 	const normalized = requireString(filePath, "filePath").replace(/^@/, "");
 	return isAbsolute(normalized) ? normalized : resolve(projectCwd, normalized);
+}
+
+function buildAttachArgs(params: BrowserParams): string[] {
+	const targetCount = [params.name, params.cdpEndpoint, params.browserServerEndpoint].filter(
+		(value) => value !== undefined,
+	).length + (params.attachViaExtension ? 1 : 0);
+	if (targetCount !== 1) {
+		throw new Error(
+			"attach requires exactly one of `name`, `cdpEndpoint`, `browserServerEndpoint`, or `attachViaExtension`",
+		);
+	}
+
+	const args = ["attach"];
+	if (params.name !== undefined) args.push(requireNonEmptyString(params.name, "name"));
+	if (params.cdpEndpoint !== undefined) args.push(`--cdp=${requireNonEmptyString(params.cdpEndpoint, "cdpEndpoint")}`);
+	if (params.browserServerEndpoint !== undefined) {
+		args.push(`--endpoint=${requireNonEmptyString(params.browserServerEndpoint, "browserServerEndpoint")}`);
+	}
+	if (params.attachViaExtension) {
+		if (params.browser === "firefox" || params.browser === "webkit") {
+			throw new Error("extension attachment supports only Chrome or Microsoft Edge");
+		}
+		args.push(params.browser ? `--extension=${params.browser}` : "--extension");
+	} else if (params.browser !== undefined) {
+		throw new Error("`browser` is only valid for attach when `attachViaExtension` is true");
+	}
+	return args;
+}
+
+export function releaseActionForOwnership(ownership: BrowserOwnership): BrowserReleaseAction | undefined {
+	if (ownership === "launched") return "close";
+	if (ownership === "attached") return "detach";
+	return undefined;
 }
 
 export function buildCliInvocation(params: BrowserParams, artifactId: number, projectCwd: string): CliInvocation {
@@ -118,9 +168,16 @@ export function buildCliInvocation(params: BrowserParams, artifactId: number, pr
 			const args = ["open", params.url ?? "about:blank"];
 			if (params.browser) args.push(`--browser=${params.browser}`);
 			if (params.device) args.push(`--device=${params.device}`);
+			if (params.headed) args.push("--headed");
 			if (params.mobile) args.push("--mobile");
 			return { args };
 		}
+		case "attach":
+			return { args: buildAttachArgs(params) };
+		case "detach":
+			return { args: ["detach"] };
+		case "list_sessions":
+			return { args: ["list"] };
 		case "goto":
 			return { args: ["goto", requireString(params.url, "url")] };
 		case "snapshot": {
@@ -259,7 +316,7 @@ export function buildCliInvocation(params: BrowserParams, artifactId: number, pr
 }
 
 export async function createBrowserWorkspace(): Promise<string> {
-	const workspace = await mkdtemp(join(tmpdir(), "pi-headless-browser-"));
+	const workspace = await mkdtemp(join(tmpdir(), "pi-browser-actions-"));
 	await mkdir(join(workspace, "artifacts"), { recursive: true });
 	return workspace;
 }
@@ -282,8 +339,17 @@ export async function removeBrowserWorkspace(workspace: string): Promise<void> {
 	await rm(workspace, { recursive: true, force: true });
 }
 
-export async function cleanupBrowserWorkspace(cliPath: string, session: string, workspace: string): Promise<void> {
-	await runCliProcess(cliPath, [`-s=${session}`, "close"], workspace, { timeoutMs: 10_000 }).catch(() => undefined);
+export async function cleanupBrowserWorkspace(
+	cliPath: string,
+	session: string,
+	workspace: string,
+	releaseAction: BrowserReleaseAction | undefined,
+): Promise<void> {
+	if (releaseAction) {
+		await runCliProcess(cliPath, [`-s=${session}`, releaseAction], workspace, { timeoutMs: 10_000 }).catch(
+			() => undefined,
+		);
+	}
 	await removeBrowserWorkspace(workspace);
 }
 
