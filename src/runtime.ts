@@ -339,17 +339,25 @@ export async function removeBrowserWorkspace(workspace: string): Promise<void> {
 	await rm(workspace, { recursive: true, force: true });
 }
 
+export async function releaseBrowserSession(
+	cliPath: string,
+	session: string,
+	workspace: string,
+	releaseAction: BrowserReleaseAction,
+): Promise<boolean> {
+	const result = await runCliProcess(cliPath, [`-s=${session}`, releaseAction], workspace, { timeoutMs: 10_000 }).catch(
+		() => undefined,
+	);
+	return result?.code === 0;
+}
+
 export async function cleanupBrowserWorkspace(
 	cliPath: string,
 	session: string,
 	workspace: string,
 	releaseAction: BrowserReleaseAction | undefined,
 ): Promise<void> {
-	if (releaseAction) {
-		await runCliProcess(cliPath, [`-s=${session}`, releaseAction], workspace, { timeoutMs: 10_000 }).catch(
-			() => undefined,
-		);
-	}
+	if (releaseAction) await releaseBrowserSession(cliPath, session, workspace, releaseAction);
 	await removeBrowserWorkspace(workspace);
 }
 

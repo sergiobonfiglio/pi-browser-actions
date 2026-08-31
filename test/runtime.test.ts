@@ -9,6 +9,7 @@ import {
 	createBrowserWorkspace,
 	removeBrowserWorkspace,
 	releaseActionForOwnership,
+	releaseBrowserSession,
 	runCliProcess,
 } from "../src/runtime.ts";
 
@@ -73,6 +74,18 @@ describe("browser workspace isolation", () => {
 			["-s=pi-test-session", "close"],
 			["-s=pi-test-session", "detach"],
 		]);
+	});
+
+	it("reports whether scoped session release succeeded", async () => {
+		const workspace = await createBrowserWorkspace();
+		temporaryDirectories.push(workspace);
+		const successfulCli = join(workspace, "successful-cli.mjs");
+		const failingCli = join(workspace, "failing-cli.mjs");
+		await writeFile(successfulCli, "", "utf8");
+		await writeFile(failingCli, "process.exit(2);", "utf8");
+
+		await expect(releaseBrowserSession(successfulCli, "session", workspace, "close")).resolves.toBe(true);
+		await expect(releaseBrowserSession(failingCli, "session", workspace, "detach")).resolves.toBe(false);
 	});
 
 	it("redirects CLI daemon metadata without changing unrelated environment values", () => {

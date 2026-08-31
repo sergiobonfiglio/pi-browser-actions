@@ -32,6 +32,7 @@ import {
 	cleanupBrowserWorkspace,
 	createBrowserWorkspace,
 	releaseActionForOwnership,
+	releaseBrowserSession,
 	runCliProcess,
 	type BrowserOwnership,
 } from "./runtime.ts";
@@ -223,10 +224,21 @@ export default function browserActionsExtension(pi: ExtensionAPI) {
 				details: { action: params.action, workspace: current },
 			});
 
+			const startupReleaseAction =
+				params.action === "open" ? "close" : params.action === "attach" ? "detach" : undefined;
 			// Record ownership before invoking the CLI so cancellation or timeout still triggers scoped cleanup.
 			if (params.action === "open") ownership = "launched";
 			if (params.action === "attach") ownership = "attached";
-			let output = await invokeCli(current, invocation.args, signal, params.timeoutMs);
+			let output: string;
+			try {
+				output = await invokeCli(current, invocation.args, signal, params.timeoutMs);
+			} catch (error) {
+				if (startupReleaseAction) {
+					const released = await releaseBrowserSession(playwrightCliPath, cliSession, current, startupReleaseAction);
+					if (released) ownership = "none";
+				}
+				throw error;
+			}
 			if (params.action === "close" || params.action === "detach") ownership = "none";
 			if (invocation.extractMarkdown && invocation.pageDataRelativePath && artifactPath) {
 				const pageData = await readRenderedPageDataFile(join(current, invocation.pageDataRelativePath));
