@@ -2,8 +2,13 @@
   "name": "headless-browser",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
   "scripts": {
     "setup": "playwright install chromium",
+    "setup:browsers": "playwright install chromium firefox webkit",
+    "setup:edge": "playwright install msedge",
     "smoke": "node smoke.mjs"
   },
   "dependencies": {

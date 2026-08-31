@@ -22,6 +22,35 @@ const GOOGLE_BLOCK_SIGNALS = [
 	"captcha",
 ];
 
+export const MAX_SEARCH_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+export async function readResponseTextWithLimit(
+	response: Response,
+	maxBytes = MAX_SEARCH_RESPONSE_BYTES,
+): Promise<string> {
+	const declaredLength = Number(response.headers.get("content-length"));
+	if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+		throw new Error(`Search response exceeded ${maxBytes} bytes`);
+	}
+	if (!response.body) return "";
+
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let bytes = 0;
+	let text = "";
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		bytes += value.byteLength;
+		if (bytes > maxBytes) {
+			await reader.cancel().catch(() => undefined);
+			throw new Error(`Search response exceeded ${maxBytes} bytes`);
+		}
+		text += decoder.decode(value, { stream: true });
+	}
+	return text + decoder.decode();
+}
+
 export function googleSearchUrl(query: string, limit: number): string {
 	const params = new URLSearchParams({ q: query, num: String(limit), hl: "en" });
 	return `https://www.google.com/search?${params.toString()}`;
@@ -166,7 +195,7 @@ export async function searchDuckDuckGo(query: string, limit: number, signal?: Ab
 			const url = `${endpoint}?q=${encodeURIComponent(query)}`;
 			const response = await fetch(url, { headers, signal: combinedSignal });
 			if (!response.ok || response.status === 202) continue;
-			const results = extractDuckDuckGoResults(await response.text(), limit);
+			const results = extractDuckDuckGoResults(await readResponseTextWithLimit(response), limit);
 			if (results.length > 0) return results;
 		} catch (error) {
 			if (signal?.aborted) throw error;

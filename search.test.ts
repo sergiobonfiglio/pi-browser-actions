@@ -3,7 +3,9 @@ import {
 	extractDuckDuckGoResults,
 	formatSearchResults,
 	isGoogleBlocked,
+	MAX_SEARCH_RESPONSE_BYTES,
 	parseGoogleSearchPayload,
+	readResponseTextWithLimit,
 } from "./search.ts";
 
 describe("web search parsing", () => {
@@ -51,5 +53,10 @@ describe("web search parsing", () => {
 		expect(text).toContain("Source: duckduckgo");
 		expect(text).toContain("## 1. Example");
 		expect(text).toContain("URL: https://example.com");
+	});
+
+	it("rejects oversized search responses", async () => {
+		const response = new Response("x".repeat(MAX_SEARCH_RESPONSE_BYTES + 1));
+		await expect(readResponseTextWithLimit(response)).rejects.toThrow("Search response exceeded");
 	});
 });

@@ -46,7 +46,6 @@ try {
 } finally {
 	try {
 		run([`-s=${session}`, "close"]);
-		run(["kill-all"]);
 	} catch {
 		// Best-effort cleanup; removing the private daemon directory is still safe.
 	}

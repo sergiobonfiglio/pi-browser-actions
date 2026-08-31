@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { renderedPageCaptureCode } from "./markdown.ts";
 
 export const BROWSER_ACTIONS = [
 	"open",
@@ -135,7 +136,7 @@ export function buildCliInvocation(params: BrowserParams, artifactId: number, pr
 			return {
 				args: [
 					"eval",
-					"() => ({ html: document.documentElement.outerHTML, url: location.href, title: document.title })",
+					renderedPageCaptureCode(),
 					`--filename=${pageDataRelativePath}`,
 				],
 				artifactRelativePath,
@@ -279,6 +280,11 @@ export function absolutizeArtifactLinks(output: string, workspace: string): stri
 
 export async function removeBrowserWorkspace(workspace: string): Promise<void> {
 	await rm(workspace, { recursive: true, force: true });
+}
+
+export async function cleanupBrowserWorkspace(cliPath: string, session: string, workspace: string): Promise<void> {
+	await runCliProcess(cliPath, [`-s=${session}`, "close"], workspace, { timeoutMs: 10_000 }).catch(() => undefined);
+	await removeBrowserWorkspace(workspace);
 }
 
 export function runCliProcess(

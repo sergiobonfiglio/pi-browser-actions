@@ -1,5 +1,14 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseRenderedPageData, renderedPageToMarkdown } from "./markdown.ts";
+import {
+	MAX_RENDERED_HTML_BYTES,
+	MAX_RENDERED_PAGE_DATA_BYTES,
+	parseRenderedPageData,
+	readRenderedPageDataFile,
+	renderedPageToMarkdown,
+} from "./markdown.ts";
 
 const ARTICLE_HTML = `<!doctype html>
 <html>
@@ -41,5 +50,19 @@ describe("rendered page Markdown extraction", () => {
 	it("rejects malformed browser data", () => {
 		expect(() => parseRenderedPageData({ url: "https://example.com" })).toThrow("rendered HTML");
 		expect(() => parseRenderedPageData({ html: "<p>x</p>" })).toThrow("page URL");
+		expect(() =>
+			parseRenderedPageData({ html: "x".repeat(MAX_RENDERED_HTML_BYTES + 1), url: "https://example.com" }),
+		).toThrow("5 MB extraction limit");
+	});
+
+	it("rejects oversized capture files before parsing JSON", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "headless-browser-markdown-test-"));
+		const path = join(directory, "rendered-page.json");
+		try {
+			await writeFile(path, "x".repeat(MAX_RENDERED_PAGE_DATA_BYTES + 1));
+			await expect(readRenderedPageDataFile(path)).rejects.toThrow("12 MB extraction limit");
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
 	});
 });

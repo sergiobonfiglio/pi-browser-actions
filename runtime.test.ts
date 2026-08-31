@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
 	absolutizeArtifactLinks,
 	buildCliInvocation,
+	cleanupBrowserWorkspace,
 	cliEnvironment,
 	createBrowserWorkspace,
 	removeBrowserWorkspace,
@@ -44,6 +45,28 @@ describe("headless browser isolation", () => {
 		await expect(access(workspace)).rejects.toThrow();
 	});
 
+	it("closes only its named session before removing the workspace", async () => {
+		const workspace = await createBrowserWorkspace();
+		const recorder = await createBrowserWorkspace();
+		temporaryDirectories.push(workspace, recorder);
+		const callsPath = join(recorder, "calls.jsonl");
+		const scriptPath = join(workspace, "fake-cli.mjs");
+		await writeFile(
+			scriptPath,
+			`import fs from "node:fs"; fs.appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(process.argv.slice(2)) + "\\n");`,
+			"utf8",
+		);
+
+		await cleanupBrowserWorkspace(scriptPath, "pi-test-session", workspace);
+
+		await expect(access(workspace)).rejects.toThrow();
+		const calls = (await readFile(callsPath, "utf8"))
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		expect(calls).toEqual([["-s=pi-test-session", "close"]]);
+	});
+
 	it("redirects CLI daemon metadata without changing unrelated environment values", () => {
 		const environment = cliEnvironment("/tmp/example");
 		expect(environment.PWTEST_DAEMON_SESSION_DIR).toBe("/tmp/example/daemon");
@@ -70,6 +93,7 @@ describe("headless browser command mapping", () => {
 		expect(invocation.pageDataRelativePath).toBe("artifacts/rendered-page-7.json");
 		expect(invocation.extractMarkdown).toBe(true);
 	});
+
 	it("keeps generated output paths relative to the temporary CLI cwd", () => {
 		const invocation = buildCliInvocation({ action: "screenshot", fullPage: true }, 12, "/project");
 		expect(invocation).toEqual({
