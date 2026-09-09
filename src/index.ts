@@ -17,6 +17,13 @@ import sharp from "sharp";
 import { Type } from "typebox";
 import { readRenderedPageDataFile, renderedPageToMarkdown } from "./markdown.ts";
 import {
+	collectOutputMetadata,
+	phaseForAction,
+	renderBrowserCall,
+	renderBrowserResult,
+	type BrowserDetails,
+} from "./rendering.ts";
+import {
 	formatSearchResults,
 	googleExtractionCode,
 	googlePreparationCode,
@@ -129,14 +136,6 @@ const BrowserParameters = Type.Object({
 	),
 });
 
-interface BrowserDetails {
-	action: string;
-	workspace: string;
-	artifactPath?: string;
-	fullOutputPath?: string;
-	truncated?: boolean;
-}
-
 interface SearchDetails {
 	query: string;
 	source: string;
@@ -232,21 +231,8 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 		execute(...args) {
 			return executeBrowserAction(...args);
 		},
-		renderCall(args, theme) {
-			const destination = args.url ?? args.name ?? args.cdpEndpoint ?? args.browserServerEndpoint ?? "";
-			return new Text(
-				theme.fg("toolTitle", theme.bold("browser_session ")) +
-					theme.fg("muted", `${args.action}${destination ? ` ${destination}` : ""}`),
-				0,
-				0,
-			);
-		},
-		renderResult(result, { isPartial }, theme, context) {
-			if (isPartial) return new Text(theme.fg("warning", "Updating browser session…"), 0, 0);
-			const details = result.details as BrowserDetails | undefined;
-			const prefix = context.isError ? theme.fg("error", "✗ ") : theme.fg("success", "✓ ");
-			return new Text(`${prefix}${theme.fg("muted", details?.action ?? "browser session")}`, 0, 0);
-		},
+		renderCall: renderBrowserCall,
+		renderResult: renderBrowserResult,
 	});
 
 	pi.registerTool({
@@ -267,6 +253,7 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 		executionMode: "sequential" as ToolExecutionMode,
 
 		execute: (executeBrowserAction = async (_toolCallId, params: BrowserParams, signal, onUpdate, ctx) => {
+			const startedAt = Date.now();
 			const current = await ensureWorkspace();
 			const currentArtifactId = ++artifactId;
 			const startupOwnership = params.action === "open" ? "launched" : params.action === "attach" ? "attached" : undefined;
@@ -296,14 +283,16 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 			}
 
 			let invocation = buildCliInvocation(params, currentArtifactId, ctx.cwd);
+			let requestedReleaseAction: BrowserDetails["release"];
 			if (idempotentStartup) {
 				const url = typeof params.url === "string" && params.url.trim() ? params.url : undefined;
 				invocation = { args: params.action === "open" && url ? ["goto", url] : ["tab-list"] };
 			} else if (params.action === "close") {
-				const releaseAction = releaseActionForOwnership(ownership);
-				invocation = { ...invocation, args: releaseAction ? [releaseAction] : [] };
-			} else if (params.action === "detach" && ownership === "none") {
-				invocation = { ...invocation, args: [] };
+				requestedReleaseAction = releaseActionForOwnership(ownership);
+				invocation = { ...invocation, args: requestedReleaseAction ? [requestedReleaseAction] : [] };
+			} else if (params.action === "detach") {
+				requestedReleaseAction = ownership === "attached" ? "detach" : undefined;
+				if (ownership === "none") invocation = { ...invocation, args: [] };
 			}
 			const artifactPath = invocation.artifactRelativePath
 				? join(current, invocation.artifactRelativePath)
@@ -317,7 +306,12 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 
 			onUpdate?.({
 				content: [{ type: "text", text: `Running browser action: ${params.action}` }],
-				details: { action: params.action, workspace: current },
+				details: {
+					action: params.action,
+					workspace: current,
+					phase: phaseForAction(params.action),
+					ownership,
+				} satisfies BrowserDetails,
 			});
 
 			if (startupOwnership && !idempotentStartup) {
@@ -336,6 +330,15 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 					);
 				}
 			} catch (error) {
+				onUpdate?.({
+					content: [{ type: "text", text: `Recovering from failed browser ${params.action}` }],
+					details: {
+						action: params.action,
+						workspace: current,
+						phase: "recovering",
+						ownership,
+					} satisfies BrowserDetails,
+				});
 				const message = error instanceof Error ? error.message : String(error);
 				if (startupOwnership && !idempotentStartup) {
 					const releaseAction = startupOwnership === "launched" ? "close" : "detach";
@@ -380,14 +383,26 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 
 			const diagnosticOutput = output;
 			if (params.action === "eval" || params.action === "run_code") output = stripEchoedSource(output);
+			let extractedPage: BrowserDetails["page"];
 			if (invocation.extractMarkdown && invocation.pageDataRelativePath && artifactPath) {
+				onUpdate?.({
+					content: [{ type: "text", text: "Extracting Markdown from the rendered page" }],
+					details: {
+						action: params.action,
+						workspace: current,
+						phase: "extracting Markdown",
+						ownership,
+					} satisfies BrowserDetails,
+				});
 				const pageData = await readRenderedPageDataFile(join(current, invocation.pageDataRelativePath));
 				const extraction = renderedPageToMarkdown(pageData);
+				extractedPage = { title: extraction.title, url: extraction.url };
 				output = extraction.markdown;
 				await writeFile(artifactPath, output, "utf8");
 			}
 
-			const truncation = truncateHead(output || "Command completed.", {
+			const outputForModel = output || "Command completed.";
+			const truncation = truncateHead(outputForModel, {
 				maxLines: params.action === "snapshot" ? SNAPSHOT_MAX_LINES : DEFAULT_MAX_LINES,
 				maxBytes: params.action === "snapshot" ? SNAPSHOT_MAX_BYTES : DEFAULT_MAX_BYTES,
 			});
@@ -395,18 +410,24 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 			let fullOutputPath: string | undefined;
 			if (truncation.truncated) {
 				fullOutputPath = join(current, "artifacts", `cli-output-${currentArtifactId}.txt`);
-				await writeFile(fullOutputPath, diagnosticOutput !== output ? diagnosticOutput : output, "utf8");
+				const fullOutput = params.action === "eval" || params.action === "run_code" ? diagnosticOutput : outputForModel;
+				await writeFile(fullOutputPath, fullOutput, "utf8");
 				text +=
 					`\n\n[Output truncated to ${truncation.outputLines} of ${truncation.totalLines} lines ` +
 					`(${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}). ` +
 					`Full output: ${fullOutputPath}]`;
 			}
-			if (artifactPath) text += `\n\nTemporary full-resolution artifact: ${artifactPath}`;
+			if (artifactPath) {
+				text += `\n\n${invocation.attachImage ? "Temporary full-resolution artifact" : "Temporary artifact"}: ${artifactPath}`;
+			}
 
 			const content: Array<TextContent | ImageContent> = [{ type: "text", text }];
+			let screenshot: BrowserDetails["screenshot"];
 			if (invocation.attachImage && artifactPath) {
+				const fullImage = await readFile(artifactPath);
+				const fullMetadata = await sharp(fullImage).metadata();
 				const previewPath = join(current, "artifacts", `screenshot-preview-${currentArtifactId}.jpeg`);
-				await sharp(artifactPath)
+				await sharp(fullImage)
 					.resize({
 						width: SCREENSHOT_PREVIEW_MAX_DIMENSION,
 						height: SCREENSHOT_PREVIEW_MAX_DIMENSION,
@@ -415,48 +436,56 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 					})
 					.jpeg({ quality: 75 })
 					.toFile(previewPath);
-				const image = await readFile(previewPath);
-				if (image.length <= MAX_INLINE_SCREENSHOT_BYTES) {
-					content.push({ type: "image", data: image.toString("base64"), mimeType: "image/jpeg" });
+				const preview = await readFile(previewPath);
+				const previewMetadata = await sharp(preview).metadata();
+				const attached = preview.length <= MAX_INLINE_SCREENSHOT_BYTES;
+				if (attached) {
+					content.push({ type: "image", data: preview.toString("base64"), mimeType: "image/jpeg" });
 				} else {
 					content[0] = {
 						type: "text",
-						text: `${text}\n\n[The ${formatSize(image.length)} preview is too large to attach inline.]`,
+						text: `${text}\n\n[The ${formatSize(preview.length)} preview is too large to attach inline.]`,
+					};
+				}
+				if (fullMetadata.width && fullMetadata.height) {
+					screenshot = {
+						format: "jpeg",
+						fullWidth: fullMetadata.width,
+						fullHeight: fullMetadata.height,
+						previewWidth: previewMetadata.width,
+						previewHeight: previewMetadata.height,
+						bytes: fullImage.length,
+						previewBytes: preview.length,
+						attached,
 					};
 				}
 			}
 
+			const outputMetadata = collectOutputMetadata(
+				outputForModel,
+				truncation.content,
+				truncation.truncated,
+				params.action,
+			);
 			return {
 				content,
 				details: {
 					action: params.action,
 					workspace: current,
+					durationMs: Date.now() - startedAt,
+					ownership,
+					release: requestedReleaseAction,
 					artifactPath,
 					fullOutputPath,
-					truncated: truncation.truncated,
+					screenshot,
+					...outputMetadata,
+					page: extractedPage ?? outputMetadata.page,
 				} satisfies BrowserDetails,
 			};
 		}),
 
-		renderCall(args, theme) {
-			const destination = args.url ?? args.target ?? args.text ?? "";
-			const suffix = destination ? ` ${destination}` : "";
-			return new Text(
-				theme.fg("toolTitle", theme.bold("browser ")) + theme.fg("muted", `${args.action}${suffix}`),
-				0,
-				0,
-			);
-		},
-
-		renderResult(result, { isPartial }, theme, context) {
-			if (isPartial) return new Text(theme.fg("warning", "Running browser action…"), 0, 0);
-			const details = result.details as BrowserDetails | undefined;
-			const prefix = context.isError ? theme.fg("error", "✗ ") : theme.fg("success", "✓ ");
-			let summary = `${prefix}${theme.fg("muted", details?.action ?? "browser action")}`;
-			if (details?.artifactPath) summary += theme.fg("dim", ` → ${details.artifactPath}`);
-			if (details?.truncated) summary += theme.fg("warning", " (truncated)");
-			return new Text(summary, 0, 0);
-		},
+		renderCall: renderBrowserCall,
+		renderResult: renderBrowserResult,
 	});
 
 	pi.registerTool({
