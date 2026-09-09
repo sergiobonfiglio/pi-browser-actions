@@ -14,6 +14,14 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import {
+	collectOutputMetadata,
+	phaseForAction,
+	pngDimensions,
+	renderBrowserCall,
+	renderBrowserResult,
+	type BrowserDetails,
+} from "./rendering.ts";
 import { readRenderedPageDataFile, renderedPageToMarkdown } from "./markdown.ts";
 import {
 	formatSearchResults,
@@ -109,14 +117,6 @@ const BrowserParameters = Type.Object({
 	),
 });
 
-interface BrowserDetails {
-	action: string;
-	workspace: string;
-	artifactPath?: string;
-	fullOutputPath?: string;
-	truncated?: boolean;
-}
-
 interface SearchDetails {
 	query: string;
 	source: string;
@@ -195,6 +195,7 @@ export default function browserActionsExtension(pi: ExtensionAPI) {
 		executionMode: "sequential" as ToolExecutionMode,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const startedAt = Date.now();
 			if ((params.action === "open" || params.action === "attach") && ownership !== "none") {
 				throw new Error(`A browser session is already ${ownership}. Call close or detach before starting another one.`);
 			}
@@ -205,9 +206,14 @@ export default function browserActionsExtension(pi: ExtensionAPI) {
 			const current = await ensureWorkspace();
 			const currentArtifactId = ++artifactId;
 			let invocation = buildCliInvocation(params, currentArtifactId, ctx.cwd);
-			if (params.action === "close") {
-				const releaseAction = releaseActionForOwnership(ownership);
-				if (releaseAction) invocation = { ...invocation, args: [releaseAction] };
+			const requestedReleaseAction =
+				params.action === "detach"
+					? "detach"
+					: params.action === "close"
+						? releaseActionForOwnership(ownership)
+						: undefined;
+			if (params.action === "close" && requestedReleaseAction) {
+				invocation = { ...invocation, args: [requestedReleaseAction] };
 			}
 			const artifactPath = invocation.artifactRelativePath
 				? join(current, invocation.artifactRelativePath)
@@ -221,7 +227,12 @@ export default function browserActionsExtension(pi: ExtensionAPI) {
 
 			onUpdate?.({
 				content: [{ type: "text", text: `Running browser action: ${params.action}` }],
-				details: { action: params.action, workspace: current },
+				details: {
+					action: params.action,
+					workspace: current,
+					phase: phaseForAction(params.action),
+					ownership,
+				} satisfies BrowserDetails,
 			});
 
 			const startupReleaseAction =
@@ -234,20 +245,41 @@ export default function browserActionsExtension(pi: ExtensionAPI) {
 				output = await invokeCli(current, invocation.args, signal, params.timeoutMs);
 			} catch (error) {
 				if (startupReleaseAction) {
+					onUpdate?.({
+						content: [{ type: "text", text: `Recovering from failed browser ${params.action}` }],
+						details: {
+							action: params.action,
+							workspace: current,
+							phase: "recovering",
+							ownership,
+						} satisfies BrowserDetails,
+					});
 					const released = await releaseBrowserSession(playwrightCliPath, cliSession, current, startupReleaseAction);
 					if (released) ownership = "none";
 				}
 				throw error;
 			}
 			if (params.action === "close" || params.action === "detach") ownership = "none";
+			let extractedPage: BrowserDetails["page"];
 			if (invocation.extractMarkdown && invocation.pageDataRelativePath && artifactPath) {
+				onUpdate?.({
+					content: [{ type: "text", text: "Extracting Markdown from the rendered page" }],
+					details: {
+						action: params.action,
+						workspace: current,
+						phase: "extracting Markdown",
+						ownership,
+					} satisfies BrowserDetails,
+				});
 				const pageData = await readRenderedPageDataFile(join(current, invocation.pageDataRelativePath));
 				const extraction = renderedPageToMarkdown(pageData);
+				extractedPage = { title: extraction.title, url: extraction.url };
 				output = extraction.markdown;
 				await writeFile(artifactPath, output, "utf8");
 			}
 
-			const truncation = truncateHead(output || "Command completed.", {
+			const outputForModel = output || "Command completed.";
+			const truncation = truncateHead(outputForModel, {
 				maxLines: DEFAULT_MAX_LINES,
 				maxBytes: DEFAULT_MAX_BYTES,
 			});
@@ -255,7 +287,7 @@ export default function browserActionsExtension(pi: ExtensionAPI) {
 			let fullOutputPath: string | undefined;
 			if (truncation.truncated) {
 				fullOutputPath = join(current, "artifacts", `cli-output-${currentArtifactId}.txt`);
-				await writeFile(fullOutputPath, output, "utf8");
+				await writeFile(fullOutputPath, outputForModel, "utf8");
 				text +=
 					`\n\n[Output truncated to ${truncation.outputLines} of ${truncation.totalLines} lines ` +
 					`(${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}). ` +
@@ -264,9 +296,12 @@ export default function browserActionsExtension(pi: ExtensionAPI) {
 			if (artifactPath) text += `\n\nTemporary artifact: ${artifactPath}`;
 
 			const content: Array<TextContent | ImageContent> = [{ type: "text", text }];
+			let screenshot: BrowserDetails["screenshot"];
 			if (invocation.attachImage && artifactPath) {
 				const image = await readFile(artifactPath);
-				if (image.length <= MAX_INLINE_SCREENSHOT_BYTES) {
+				const dimensions = pngDimensions(image);
+				const attached = image.length <= MAX_INLINE_SCREENSHOT_BYTES;
+				if (attached) {
 					content.push({ type: "image", data: image.toString("base64"), mimeType: "image/png" });
 				} else {
 					content[0] = {
@@ -274,40 +309,43 @@ export default function browserActionsExtension(pi: ExtensionAPI) {
 						text: `${text}\n\n[The ${formatSize(image.length)} screenshot is too large to attach inline.]`,
 					};
 				}
+				if (dimensions) {
+					screenshot = {
+						fullWidth: dimensions.width,
+						fullHeight: dimensions.height,
+						previewWidth: attached ? dimensions.width : undefined,
+						previewHeight: attached ? dimensions.height : undefined,
+						bytes: image.length,
+						attached,
+					};
+				}
 			}
 
+			const outputMetadata = collectOutputMetadata(
+				outputForModel,
+				truncation.content,
+				truncation.truncated,
+				params.action,
+			);
 			return {
 				content,
 				details: {
 					action: params.action,
 					workspace: current,
+					durationMs: Date.now() - startedAt,
+					ownership,
+					release: requestedReleaseAction,
 					artifactPath,
 					fullOutputPath,
-					truncated: truncation.truncated,
+					screenshot,
+					...outputMetadata,
+					page: extractedPage ?? outputMetadata.page,
 				} satisfies BrowserDetails,
 			};
 		},
 
-		renderCall(args, theme) {
-			const destination =
-				args.url ?? args.name ?? args.cdpEndpoint ?? args.browserServerEndpoint ?? args.target ?? args.text ?? "";
-			const suffix = destination ? ` ${destination}` : "";
-			return new Text(
-				theme.fg("toolTitle", theme.bold("browser ")) + theme.fg("muted", `${args.action}${suffix}`),
-				0,
-				0,
-			);
-		},
-
-		renderResult(result, { isPartial }, theme, context) {
-			if (isPartial) return new Text(theme.fg("warning", "Running browser action…"), 0, 0);
-			const details = result.details as BrowserDetails | undefined;
-			const prefix = context.isError ? theme.fg("error", "✗ ") : theme.fg("success", "✓ ");
-			let summary = `${prefix}${theme.fg("muted", details?.action ?? "browser action")}`;
-			if (details?.artifactPath) summary += theme.fg("dim", ` → ${details.artifactPath}`);
-			if (details?.truncated) summary += theme.fg("warning", " (truncated)");
-			return new Text(summary, 0, 0);
-		},
+		renderCall: renderBrowserCall,
+		renderResult: renderBrowserResult,
 	});
 
 	pi.registerTool({
