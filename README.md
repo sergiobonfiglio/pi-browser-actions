@@ -13,7 +13,7 @@ pi install npm:pi-browser-actions
 Install the matching Chromium build once if Playwright reports that it is missing:
 
 ```bash
-npm exec --yes --package=@playwright/cli@0.1.18 -- playwright-cli install-browser chromium
+npm exec --yes --package=@playwright/cli@0.1.19 -- playwright-cli install-browser chromium
 ```
 
 Test without installing permanently:
@@ -24,9 +24,9 @@ pi --no-extensions -e npm:pi-browser-actions
 
 ## Tools
 
-### `browser`
+### `browser_session`
 
-Controls one stateful Playwright session. Start with `open` or `attach`, then use `snapshot` before ref-based interaction.
+Starts and releases the stateful Playwright session shared by `browser` and `web_search`. Keeping its compact launch/attachment schema separate prevents ordinary browser calls from carrying irrelevant session defaults.
 
 Open a headless browser:
 
@@ -42,19 +42,28 @@ Open a visible browser window:
 
 The default browser is Playwright's bundled Chromium. Explicit browser choices are `chrome`, `firefox`, `webkit`, and `msedge`.
 
+Session actions are `open`, `attach`, `detach`, `close`, and `list_sessions`.
+
+### `browser`
+
+Controls the active page after `browser_session` has opened or attached it. Use `snapshot` before ref-based interaction.
+
 Useful action groups:
 
-- Session: `open`, `attach`, `detach`, `close`, `list_sessions`
 - Navigation: `goto`, `back`, `forward`, `reload`, `new_tab`, `tabs`, `select_tab`, `close_tab`
 - Page content: `snapshot`, `find`, `extract_markdown`
 - Interaction: `click`, `dblclick`, `fill`, `type`, `press`, `hover`, `select`, `check`, `uncheck`, `upload`, `mousewheel`
-- Inspection: `console`, `requests`, `request`, `eval`, `run_code`
+- Inspection: `console`, `requests`, `request_details`, `eval`, `run_code`
 - Rendering: `screenshot`, `pdf`
 - State: `save_state`, `load_state`
 
-Screenshots are attached inline up to 10 MB. Tool output is capped at 2,000 lines or 50 KB; truncated full output remains available only in the temporary workspace.
+Call `requests` first, then pass one of its indexes to `request_details`. Successful `eval` and `run_code` responses omit the CLI's echoed source block. A complete diagnostic artifact is exposed only when output is truncated.
 
-### Attaching to an existing browser
+Screenshots are saved as full-resolution JPEG temporary artifacts and attached to the model as JPEG previews downscaled to fit within 1600×1600. General output is capped at 2,000 lines or 50 KB. Snapshots use a smaller 500-line/20 KB model-facing budget; truncation preserves the exact leading content and links to the complete temporary output artifact.
+
+Default command timeouts are 20 seconds for ordinary actions, 45 seconds for navigation, and 60 seconds for open/attach. `timeoutMs` overrides these defaults.
+
+### Attaching to an existing browser with `browser_session`
 
 List discoverable Playwright sessions and supported local browser channels:
 
@@ -82,7 +91,7 @@ Attach using exactly one target:
 
 CDP attachment requires Chrome or Edge to expose a remote-debugging endpoint. Browser-extension attachment requires the Playwright browser extension. A normal browser process without CDP, a Playwright browser-server endpoint, or the extension cannot be attached.
 
-`detach` disconnects explicitly. Calling `close` or ending the Pi session also detaches an externally owned browser; it never closes that browser. Browsers launched by this package are closed normally.
+`detach` disconnects explicitly. Calling `close` or ending the Pi session also detaches an externally owned browser; it never closes that browser. Browsers launched by this package are closed normally. Repeating a compatible `open` reuses the active browser and navigates it when a URL is supplied; repeating the same `attach` reuses the attachment. Different launch or attachment options still require `close` or `detach` first.
 
 ### `web_search`
 
@@ -131,7 +140,7 @@ npm run setup:browsers
 npm run setup:edge
 ```
 
-`@playwright/cli@0.1.18` is the latest non-prerelease CLI package but currently pins an alpha Playwright build internally. The lockfile fixes the exact build; run the full release checks before accepting CLI upgrades.
+`@playwright/cli@0.1.19` is a stable CLI package release but currently pins an alpha Playwright build internally. The package and lockfile fix the exact CLI and Playwright builds; run the full release checks before accepting upgrades.
 
 ## License
 

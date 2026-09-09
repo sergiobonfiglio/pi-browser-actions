@@ -3,14 +3,19 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	absolutizeArtifactLinks,
+	BROWSER_ACTIONS,
 	buildCliInvocation,
 	cleanupBrowserWorkspace,
 	cliEnvironment,
 	createBrowserWorkspace,
+	defaultTimeoutForAction,
 	removeBrowserWorkspace,
 	releaseActionForOwnership,
 	releaseBrowserSession,
 	runCliProcess,
+	sanitizeCliError,
+	sessionConfiguration,
+	stripEchoedSource,
 } from "../src/runtime.ts";
 
 const temporaryDirectories: string[] = [];
@@ -97,6 +102,11 @@ describe("browser workspace isolation", () => {
 });
 
 describe("browser command mapping", () => {
+	it("exposes request_details without the ambiguous request action", () => {
+		expect(BROWSER_ACTIONS).toContain("request_details");
+		expect(BROWSER_ACTIONS).not.toContain("request" as never);
+	});
+
 	it("maps snapshot and interaction options", () => {
 		expect(
 			buildCliInvocation({ action: "snapshot", target: "e4", depth: 7, boxes: true }, 1, "/project").args,
@@ -142,6 +152,22 @@ describe("browser command mapping", () => {
 		expect(releaseActionForOwnership("attached")).toBe("detach");
 	});
 
+	it("ignores empty and irrelevant model defaults when selecting an attachment target", () => {
+		const params = {
+			action: "attach" as const,
+			name: "",
+			cdpEndpoint: " http://localhost:9222 ",
+			browserServerEndpoint: "   ",
+			attachViaExtension: false,
+			browser: "chrome" as const,
+		};
+		expect(buildCliInvocation(params, 1, "/project").args).toEqual(["attach", "--cdp=http://localhost:9222"]);
+		expect(sessionConfiguration(params)).toBe(JSON.stringify(["--cdp=http://localhost:9222"]));
+		expect(() =>
+			buildCliInvocation({ ...params, name: "shared" }, 1, "/project"),
+		).toThrow("exactly one non-empty target");
+	});
+
 	it("captures rendered HTML to a temporary intermediate file for Markdown conversion", () => {
 		const invocation = buildCliInvocation({ action: "extract_markdown" }, 7, "/project");
 		expect(invocation.args[0]).toBe("eval");
@@ -154,8 +180,8 @@ describe("browser command mapping", () => {
 	it("keeps generated output paths relative to the temporary CLI cwd", () => {
 		const invocation = buildCliInvocation({ action: "screenshot", fullPage: true }, 12, "/project");
 		expect(invocation).toEqual({
-			args: ["screenshot", "--filename=artifacts/screenshot-12.png", "--full-page"],
-			artifactRelativePath: "artifacts/screenshot-12.png",
+			args: ["screenshot", "--filename=artifacts/screenshot-12.jpeg", "--full-page"],
+			artifactRelativePath: "artifacts/screenshot-12.jpeg",
 			attachImage: true,
 		});
 	});
@@ -166,19 +192,62 @@ describe("browser command mapping", () => {
 		expect(invocation.artifactRelativePath).toBeUndefined();
 	});
 
-	it("rejects missing action-specific arguments", () => {
-		expect(() => buildCliInvocation({ action: "goto" }, 1, "/project")).toThrow("`url`");
+	it("maps request_details and rejects missing action-specific arguments", () => {
+		expect(buildCliInvocation({ action: "request_details", index: 3 }, 1, "/project").args).toEqual([
+			"request",
+			"3",
+		]);
+		expect(() => buildCliInvocation({ action: "request_details" }, 1, "/project")).toThrow(
+			"Call requests first",
+		);
+		expect(() => buildCliInvocation({ action: "goto", url: "  " }, 1, "/project")).toThrow("`url`");
 		expect(() => buildCliInvocation({ action: "click" }, 1, "/project")).toThrow("`target`");
 		expect(() => buildCliInvocation({ action: "resize", width: 800 }, 1, "/project")).toThrow("`height`");
+	});
+
+	it("uses action-appropriate default timeouts", () => {
+		expect(defaultTimeoutForAction("click")).toBe(20_000);
+		expect(defaultTimeoutForAction("goto")).toBe(45_000);
+		expect(defaultTimeoutForAction("open")).toBe(60_000);
+		expect(defaultTimeoutForAction("wait", 30_000)).toBe(40_000);
+	});
+
+	it("removes echoed code and sanitizes CLI stack noise", () => {
+		const output = [
+			"### Result",
+			'{\"ok\":true}',
+			"### Ran Playwright code",
+			"```js",
+			"await page.evaluate('secret source');",
+			"```",
+		].join("\n");
+		expect(stripEchoedSource(output)).toBe('### Result\n{\"ok\":true}');
+		expect(sanitizeCliError("\u001b[31mFailure\u001b[0m\n    at node:internal/foo:1:2\nUseful hint")).toBe(
+			"Failure\nUseful hint",
+		);
+	});
+
+	it("removes Playwright source excerpts and standalone internal locations from errors", () => {
+		const output = [
+			"Error: locator.click: Target page, context or browser has been closed",
+			"    at node_modules/@playwright/cli/lib/session.js:251:17",
+			"node_modules/@playwright/cli/lib/session.js:251",
+			"> 251 | await locator.click(options);",
+			"      |       ^^^^^^^^^^^^^^^^^^^^^",
+			"The browser is no longer available.",
+		].join("\n");
+		expect(sanitizeCliError(output)).toBe(
+			"Error: locator.click: Target page, context or browser has been closed\nThe browser is no longer available.",
+		);
 	});
 
 	it("turns relative CLI artifact links into absolute temporary paths", () => {
 		const output = [
 			"[Snapshot](.playwright-cli/page.yml)",
-			"[Screenshot](artifacts/screenshot-1.png)",
+			"[Screenshot](artifacts/screenshot-1.jpeg)",
 		].join("\n");
 		expect(absolutizeArtifactLinks(output, "/tmp/browser")).toBe(
-			["[Snapshot](/tmp/browser/.playwright-cli/page.yml)", "[Screenshot](/tmp/browser/artifacts/screenshot-1.png)"].join(
+			["[Snapshot](/tmp/browser/.playwright-cli/page.yml)", "[Screenshot](/tmp/browser/artifacts/screenshot-1.jpeg)"].join(
 				"\n",
 			),
 		);

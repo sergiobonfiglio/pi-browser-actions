@@ -41,8 +41,8 @@ try {
 	run(openArgs);
 	const snapshot = run([`-s=${session}`, "snapshot"]);
 	if (!snapshot.includes('button "Temporary browser"')) throw new Error("snapshot did not contain the test button");
-	run([`-s=${session}`, "screenshot", "--filename=artifacts/smoke.png"]);
-	if (!existsSync(join(workspace, "artifacts/smoke.png"))) throw new Error("screenshot was not created in temp workspace");
+	run([`-s=${session}`, "screenshot", "--filename=artifacts/smoke.jpeg"]);
+	if (!existsSync(join(workspace, "artifacts/smoke.jpeg"))) throw new Error("JPEG screenshot was not created in temp workspace");
 	if (!existsSync(join(workspace, ".playwright-cli"))) throw new Error("automatic snapshots were not created in temp workspace");
 	if (!existedBefore && existsSync(forbiddenOutput)) throw new Error("Playwright polluted the extension directory");
 	console.log(`ok: ${headed ? "headed" : "headless"} browser output stayed in ${workspace}`);

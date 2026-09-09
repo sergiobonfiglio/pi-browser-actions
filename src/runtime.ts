@@ -4,11 +4,9 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { renderedPageCaptureCode } from "./markdown.ts";
 
+export const SESSION_ACTIONS = ["open", "attach", "detach", "list_sessions", "close"] as const;
+
 export const BROWSER_ACTIONS = [
-	"open",
-	"attach",
-	"detach",
-	"list_sessions",
 	"goto",
 	"snapshot",
 	"extract_markdown",
@@ -37,17 +35,16 @@ export const BROWSER_ACTIONS = [
 	"pdf",
 	"console",
 	"requests",
-	"request",
+	"request_details",
 	"tabs",
 	"new_tab",
 	"select_tab",
 	"close_tab",
 	"save_state",
 	"load_state",
-	"close",
 ] as const;
 
-export type BrowserAction = (typeof BROWSER_ACTIONS)[number];
+export type BrowserAction = (typeof BROWSER_ACTIONS)[number] | (typeof SESSION_ACTIONS)[number];
 
 export interface BrowserParams {
 	action: BrowserAction;
@@ -105,6 +102,50 @@ export type BrowserOwnership = "none" | "launched" | "attached";
 export type BrowserReleaseAction = "close" | "detach";
 
 const MAX_CAPTURE_BYTES = 10 * 1024 * 1024;
+const DEFAULT_ACTION_TIMEOUT_MS = 20_000;
+const NAVIGATION_TIMEOUT_MS = 45_000;
+const STARTUP_TIMEOUT_MS = 60_000;
+const ANSI_ESCAPE = /[\u001b\u009b][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
+
+function optionalString(value: string | undefined): string | undefined {
+	if (typeof value !== "string" || value.trim() === "") return undefined;
+	return value;
+}
+
+export function defaultTimeoutForAction(action: BrowserAction, milliseconds?: number): number {
+	if (action === "open" || action === "attach") return STARTUP_TIMEOUT_MS;
+	if (["goto", "back", "forward", "reload", "new_tab"].includes(action)) return NAVIGATION_TIMEOUT_MS;
+	if (action === "wait") return Math.min(45_000, Math.max(DEFAULT_ACTION_TIMEOUT_MS, (milliseconds ?? 0) + 10_000));
+	return DEFAULT_ACTION_TIMEOUT_MS;
+}
+
+export function sanitizeCliError(output: string): string {
+	const sanitized: string[] = [];
+	for (const line of output.replace(ANSI_ESCAPE, "").split("\n")) {
+		const trimmed = line.trim();
+		if (
+			/^at (?:node:|.*node_modules\/|.*playwright)/.test(trimmed) ||
+			/(?:^|[/\\])node_modules[/\\].*:\d+(?::\d+)?\)?$/.test(trimmed) ||
+			/^Node\.js v\d+/.test(trimmed)
+		) {
+			continue;
+		}
+		if (/^(?:\d+\s*)?\|?\s*\^+[~^]*$/.test(trimmed)) {
+			const sourceLine = sanitized.at(-1);
+			if (sourceLine?.startsWith(" ") || /^>?\s*\d+\s*\|/.test(sourceLine ?? "")) sanitized.pop();
+			continue;
+		}
+		sanitized.push(line);
+	}
+	return sanitized.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+export function stripEchoedSource(output: string): string {
+	return output
+		.replace(/\n?### Ran Playwright code\s*\n```(?:js|javascript)\n[\s\S]*?\n```\s*/g, "\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
+}
 
 function requireString(value: string | undefined, name: string): string {
 	if (typeof value !== "string") throw new Error(`action requires \`${name}\``);
@@ -128,30 +169,41 @@ function projectFile(filePath: string | undefined, projectCwd: string): string {
 }
 
 function buildAttachArgs(params: BrowserParams): string[] {
-	const targetCount = [params.name, params.cdpEndpoint, params.browserServerEndpoint].filter(
-		(value) => value !== undefined,
-	).length + (params.attachViaExtension ? 1 : 0);
-	if (targetCount !== 1) {
+	const name = optionalString(params.name)?.trim();
+	const cdpEndpoint = optionalString(params.cdpEndpoint)?.trim();
+	const browserServerEndpoint = optionalString(params.browserServerEndpoint)?.trim();
+	const targets = [name, cdpEndpoint, browserServerEndpoint].filter((value) => value !== undefined).length +
+		(params.attachViaExtension === true ? 1 : 0);
+	if (targets !== 1) {
 		throw new Error(
-			"attach requires exactly one of `name`, `cdpEndpoint`, `browserServerEndpoint`, or `attachViaExtension`",
+			"attach requires exactly one non-empty target: `name`, `cdpEndpoint`, `browserServerEndpoint`, or `attachViaExtension: true`",
 		);
 	}
 
 	const args = ["attach"];
-	if (params.name !== undefined) args.push(requireNonEmptyString(params.name, "name"));
-	if (params.cdpEndpoint !== undefined) args.push(`--cdp=${requireNonEmptyString(params.cdpEndpoint, "cdpEndpoint")}`);
-	if (params.browserServerEndpoint !== undefined) {
-		args.push(`--endpoint=${requireNonEmptyString(params.browserServerEndpoint, "browserServerEndpoint")}`);
-	}
-	if (params.attachViaExtension) {
+	if (name) args.push(name);
+	if (cdpEndpoint) args.push(`--cdp=${cdpEndpoint}`);
+	if (browserServerEndpoint) args.push(`--endpoint=${browserServerEndpoint}`);
+	if (params.attachViaExtension === true) {
 		if (params.browser === "firefox" || params.browser === "webkit") {
 			throw new Error("extension attachment supports only Chrome or Microsoft Edge");
 		}
 		args.push(params.browser ? `--extension=${params.browser}` : "--extension");
-	} else if (params.browser !== undefined) {
-		throw new Error("`browser` is only valid for attach when `attachViaExtension` is true");
 	}
 	return args;
+}
+
+export function sessionConfiguration(params: BrowserParams): string {
+	if (params.action === "open") {
+		return JSON.stringify({
+			browser: params.browser ?? "chromium",
+			device: optionalString(params.device),
+			headed: params.headed === true,
+			mobile: params.mobile === true,
+		});
+	}
+	if (params.action === "attach") return JSON.stringify(buildAttachArgs(params).slice(1));
+	throw new Error("session configuration is only available for open or attach");
 }
 
 export function releaseActionForOwnership(ownership: BrowserOwnership): BrowserReleaseAction | undefined {
@@ -165,9 +217,9 @@ export function buildCliInvocation(params: BrowserParams, artifactId: number, pr
 
 	switch (params.action) {
 		case "open": {
-			const args = ["open", params.url ?? "about:blank"];
+			const args = ["open", optionalString(params.url) ?? "about:blank"];
 			if (params.browser) args.push(`--browser=${params.browser}`);
-			if (params.device) args.push(`--device=${params.device}`);
+			if (optionalString(params.device)) args.push(`--device=${params.device}`);
 			if (params.headed) args.push("--headed");
 			if (params.mobile) args.push("--mobile");
 			return { args };
@@ -179,10 +231,10 @@ export function buildCliInvocation(params: BrowserParams, artifactId: number, pr
 		case "list_sessions":
 			return { args: ["list"] };
 		case "goto":
-			return { args: ["goto", requireString(params.url, "url")] };
+			return { args: ["goto", requireNonEmptyString(optionalString(params.url), "url")] };
 		case "snapshot": {
 			const args = ["snapshot"];
-			if (params.target) args.push(params.target);
+			if (optionalString(params.target)) args.push(params.target as string);
 			if (params.depth !== undefined) args.push(`--depth=${params.depth}`);
 			if (params.boxes) args.push("--boxes");
 			return { args };
@@ -257,15 +309,15 @@ export function buildCliInvocation(params: BrowserParams, artifactId: number, pr
 			};
 		case "eval": {
 			const args = ["eval", requireString(params.code, "code")];
-			if (params.target) args.push(params.target);
+			if (optionalString(params.target)) args.push(params.target as string);
 			return { args };
 		}
 		case "run_code":
 			return { args: ["run-code", requireString(params.code, "code")] };
 		case "screenshot": {
-			const artifactRelativePath = artifact("screenshot", "png");
+			const artifactRelativePath = artifact("screenshot", "jpeg");
 			const args = ["screenshot"];
-			if (params.target) args.push(params.target);
+			if (optionalString(params.target)) args.push(params.target as string);
 			args.push(`--filename=${artifactRelativePath}`);
 			if (params.fullPage) args.push("--full-page");
 			if (params.hires) args.push("--hires");
@@ -284,12 +336,15 @@ export function buildCliInvocation(params: BrowserParams, artifactId: number, pr
 		case "requests": {
 			const args = ["requests"];
 			if (params.includeStatic) args.push("--static");
-			if (params.filter) args.push(`--filter=${params.filter}`);
+			if (optionalString(params.filter)) args.push(`--filter=${params.filter}`);
 			if (params.clear) args.push("--clear");
 			return { args };
 		}
-		case "request":
-			return { args: ["request", String(requireInteger(params.index, "index"))] };
+		case "request_details":
+			if (!Number.isInteger(params.index)) {
+				throw new Error("request_details requires an `index`. Call requests first and use an index from that list.");
+			}
+			return { args: ["request", String(params.index)] };
 		case "tabs":
 			return { args: ["tab-list"] };
 		case "new_tab": {
@@ -330,7 +385,7 @@ export function cliEnvironment(workspace: string): NodeJS.ProcessEnv {
 }
 
 export function absolutizeArtifactLinks(output: string, workspace: string): string {
-	return output.replace(/\]\((\.playwright-cli|artifacts)\/([^)]+)\)/g, (_match, directory, file) =>
+	return output.replace(/\]\((?:\.\/)?(\.playwright-cli|artifacts)\/([^)]+)\)/g, (_match, directory, file) =>
 		`](${join(workspace, directory, file)})`,
 	);
 }
