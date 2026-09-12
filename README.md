@@ -26,7 +26,7 @@ pi --no-extensions -e npm:pi-browser-actions
 
 ### `browser_session`
 
-Starts and releases the stateful Playwright session shared by `browser` and `web_search`. Keeping its compact launch/attachment schema separate prevents ordinary browser calls from carrying irrelevant session defaults.
+Starts and releases the stateful Playwright session used by `browser`. Keeping its compact launch/attachment schema separate prevents ordinary browser calls from carrying irrelevant session defaults.
 
 Open a headless browser:
 
@@ -95,9 +95,9 @@ CDP attachment requires Chrome or Edge to expose a remote-debugging endpoint. Br
 
 ### `web_search`
 
-Searches without an API key. It uses a disposable Google tab first and falls back to DuckDuckGo HTML when Google blocks automated access. The previously active tab is preserved.
+When the current provider is `openai-codex`, search uses OpenAI's native web-search capability and returns a concise cited summary with `source: "openai-codex-native"`. If native search fails, or when any other provider is active, it uses DuckDuckGo HTML and returns structured titles, URLs, and snippets.
 
-Search-engine HTML can change, so this is less stable than a supported search API. DuckDuckGo responses are limited to 2 MB.
+The search engine behind OpenAI's native search is not exposed by its API. DuckDuckGo HTML can change and responses are limited to 2 MB.
 
 ## Isolation and trust model
 

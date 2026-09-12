@@ -2,9 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	extractDuckDuckGoResults,
 	formatSearchResults,
-	isGoogleBlocked,
 	MAX_SEARCH_RESPONSE_BYTES,
-	parseGoogleSearchPayload,
 	readResponseTextWithLimit,
 } from "../src/search.ts";
 
@@ -27,22 +25,6 @@ describe("web search parsing", () => {
 				snippet: "Documentation snippet.",
 			},
 		]);
-	});
-
-	it("validates Google results and detects blocked pages", () => {
-		const payload = parseGoogleSearchPayload({
-			url: "https://www.google.com/search?q=test",
-			title: "test - Google Search",
-			text: "Results",
-			hasCaptcha: false,
-			results: [
-				{ title: "Valid", url: "https://example.com", snippet: "A result" },
-				{ title: "Invalid", url: "javascript:alert(1)", snippet: "Ignored" },
-			],
-		});
-		expect(payload.results).toHaveLength(1);
-		expect(isGoogleBlocked(payload)).toBe(false);
-		expect(isGoogleBlocked({ ...payload, text: "Verify you are human" })).toBe(true);
 	});
 
 	it("formats numbered results with source URLs", () => {
