@@ -26,7 +26,7 @@ pi --no-extensions -e npm:pi-browser-actions
 
 ### `browser_session`
 
-Starts and releases the stateful Playwright session used by `browser`. Keeping its compact launch/attachment schema separate prevents ordinary browser calls from carrying irrelevant session defaults.
+Starts and releases the stateful Playwright session used by `browser`. Only this compact session tool is initially active; a successful `open` or `attach` progressively enables the larger `browser` tool for the next model response.
 
 Open a headless browser:
 

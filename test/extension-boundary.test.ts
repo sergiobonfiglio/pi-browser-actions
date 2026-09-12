@@ -5,6 +5,7 @@ import type { CliProcessResult } from "../src/runtime.ts";
 
 interface RegisteredTool {
 	name: string;
+	description?: string;
 	parameters?: { properties?: Record<string, unknown> };
 	promptGuidelines?: string[];
 	execute?: (...args: any[]) => Promise<any>;
@@ -17,6 +18,7 @@ interface Harness {
 	setSessionAvailable(value: boolean): void;
 	failNext(command: string, message: string, sessionRemains?: boolean): void;
 	setReleaseResult(value: boolean): void;
+	getActiveTools(): string[];
 }
 
 const shutdowns: Array<() => Promise<void>> = [];
@@ -32,7 +34,9 @@ function result(code: number, stdout = "", stderr = ""): CliProcessResult {
 function createHarness(): Harness {
 	const tools: RegisteredTool[] = [];
 	const calls: string[][] = [];
+	let activeTools: string[] = [];
 	let shutdown = async () => {};
+	let sessionStart = () => {};
 	let sessionAvailable = false;
 	let releaseResult = true;
 	let nextFailure: { command: string; message: string; sessionRemains: boolean } | undefined;
@@ -40,9 +44,17 @@ function createHarness(): Harness {
 	const api = {
 		registerTool(tool: RegisteredTool) {
 			tools.push(tool);
+			activeTools.push(tool.name);
 		},
-		on(event: string, handler: () => Promise<void>) {
+		on(event: string, handler: any) {
 			if (event === "session_shutdown") shutdown = handler;
+			if (event === "session_start") sessionStart = handler;
+		},
+		getActiveTools() {
+			return [...activeTools];
+		},
+		setActiveTools(names: string[]) {
+			activeTools = [...new Set(names)];
 		},
 	} as unknown as ExtensionAPI;
 
@@ -79,6 +91,7 @@ function createHarness(): Harness {
 			return releaseResult;
 		},
 	});
+	sessionStart();
 
 	const cleanup = async () => {
 		const handler = shutdown;
@@ -98,6 +111,9 @@ function createHarness(): Harness {
 		},
 		setReleaseResult(value) {
 			releaseResult = value;
+		},
+		getActiveTools() {
+			return [...activeTools];
 		},
 	};
 }
@@ -131,6 +147,18 @@ describe("extension boundary", () => {
 		expect(harness.tools.flatMap((registered) => registered.promptGuidelines ?? []).join("\n")).not.toContain(
 			"headless_browser",
 		);
+		expect(tool(harness, "browser").promptGuidelines).toBeUndefined();
+		expect(tool(harness, "browser_session").promptGuidelines?.join("\n")).toContain("Open or attach");
+		expect(tool(harness, "browser_session").description).toContain("Playwright");
+	});
+
+	it("activates browser controls after opening a session", async () => {
+		const harness = createHarness();
+		expect(harness.getActiveTools()).toEqual(["browser_session", "web_search"]);
+
+		await execute(tool(harness, "browser_session"), { action: "open" });
+
+		expect(harness.getActiveTools()).toEqual(["browser_session", "web_search", "browser"]);
 	});
 
 	it("reuses a compatible open and navigates instead of reopening", async () => {
