@@ -148,7 +148,8 @@ describe("extension boundary", () => {
 			"headless_browser",
 		);
 		expect(tool(harness, "browser").promptGuidelines).toBeUndefined();
-		expect(tool(harness, "browser_session").promptGuidelines?.join("\n")).toContain("Open or attach");
+		expect(tool(harness, "browser_session").promptGuidelines?.join("\n")).toContain("browser_session with action=open");
+		expect(tool(harness, "browser_session").promptGuidelines?.join("\n")).toContain("browser_session with action=list_sessions");
 		expect(tool(harness, "browser_session").description).toContain("Playwright");
 	});
 

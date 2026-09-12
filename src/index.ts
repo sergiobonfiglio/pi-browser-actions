@@ -207,8 +207,8 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 			"Manage a Playwright browser session for web interaction and frontend testing: open, attach, list, close, or detach. Open or attach to enable browser controls.",
 		promptSnippet: "Start a Playwright browser session for web interaction and frontend testing",
 		promptGuidelines: [
-			"Open or attach to enable browser controls; close launched sessions and detach attached sessions when finished.",
-			"Use list_sessions to discover attachable sessions and browser channels.",
+			"Use browser_session with action=open or action=attach to enable browser controls; use action=close for launched sessions and action=detach for attached sessions when finished.",
+			"Use browser_session with action=list_sessions to discover attachable sessions and browser channels.",
 		],
 		parameters: SessionParameters,
 		executionMode: "sequential" as ToolExecutionMode,
