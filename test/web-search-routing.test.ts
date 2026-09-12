@@ -39,12 +39,18 @@ function rendered(component: { render(width: number): string[] }): string {
 }
 
 describe("web search routing", () => {
-	it("uses native search for the openai-codex provider", async () => {
+	it("uses explicitly selected native search for the openai-codex provider", async () => {
 		const nativeSearch = vi.fn(async () => "Native summary https://example.com");
 		const duckDuckGo = vi.fn(async () => [result]);
 		const tool = registerWebSearch({ searchOpenAICodexNative: nativeSearch, searchDuckDuckGo: duckDuckGo });
 
-		const response = await tool.execute("call", { query: "example", maxResults: 3 }, undefined, undefined, context("openai-codex"));
+		const response = await tool.execute(
+			"call",
+			{ query: "example", maxResults: 3, provider: "native" },
+			undefined,
+			undefined,
+			context("openai-codex"),
+		);
 
 		expect(response.details.source).toBe("openai-codex-native");
 		expect(response.content[0].text).toContain("Native summary");
@@ -69,14 +75,70 @@ describe("web search routing", () => {
 		expect(duckDuckGo).toHaveBeenCalledOnce();
 	});
 
-	it("uses DuckDuckGo directly for other providers", async () => {
-		const nativeSearch = vi.fn(async () => "unused");
+	it("uses Brave before DuckDuckGo in auto mode", async () => {
+		const brave = vi.fn(async () => [result]);
 		const duckDuckGo = vi.fn(async () => [result]);
-		const tool = registerWebSearch({ searchOpenAICodexNative: nativeSearch, searchDuckDuckGo: duckDuckGo });
+		const tool = registerWebSearch({ searchBrave: brave, searchDuckDuckGo: duckDuckGo, braveApiKey: "secret" });
+
+		const response = await tool.execute("call", { query: "example" }, undefined, undefined, context("anthropic"));
+
+		expect(response.details.source).toBe("brave");
+		expect(brave).toHaveBeenCalledWith("example", 8, "secret", undefined);
+		expect(duckDuckGo).not.toHaveBeenCalled();
+	});
+
+	it("falls back to DuckDuckGo when Brave fails in auto mode", async () => {
+		const brave = vi.fn(async () => { throw new Error("brave unavailable"); });
+		const duckDuckGo = vi.fn(async () => [result]);
+		const tool = registerWebSearch({ searchBrave: brave, searchDuckDuckGo: duckDuckGo, braveApiKey: "secret" });
 
 		const response = await tool.execute("call", { query: "example" }, undefined, undefined, context("anthropic"));
 
 		expect(response.details.source).toBe("duckduckgo");
-		expect(nativeSearch).not.toHaveBeenCalled();
+		expect(brave).toHaveBeenCalledOnce();
+		expect(duckDuckGo).toHaveBeenCalledOnce();
+	});
+
+	it("uses an explicitly selected DuckDuckGo without calling Brave", async () => {
+		const brave = vi.fn(async () => [result]);
+		const duckDuckGo = vi.fn(async () => [result]);
+		const tool = registerWebSearch({ searchBrave: brave, searchDuckDuckGo: duckDuckGo, braveApiKey: "secret" });
+
+		const response = await tool.execute(
+			"call",
+			{ query: "example", provider: "duckduckgo" },
+			undefined,
+			undefined,
+			context("anthropic"),
+		);
+
+		expect(response.details.source).toBe("duckduckgo");
+		expect(brave).not.toHaveBeenCalled();
+	});
+
+	it("does not fall back when Brave is explicitly selected", async () => {
+		const brave = vi.fn(async () => { throw new Error("brave unavailable"); });
+		const duckDuckGo = vi.fn(async () => [result]);
+		const tool = registerWebSearch({ searchBrave: brave, searchDuckDuckGo: duckDuckGo, braveApiKey: "secret" });
+
+		await expect(tool.execute(
+			"call",
+			{ query: "example", provider: "brave" },
+			undefined,
+			undefined,
+			context("anthropic"),
+		)).rejects.toThrow("brave unavailable");
+		expect(duckDuckGo).not.toHaveBeenCalled();
+	});
+
+	it("rejects explicit native search for non-Codex providers", async () => {
+		const tool = registerWebSearch({});
+		await expect(tool.execute(
+			"call",
+			{ query: "example", provider: "native" },
+			undefined,
+			undefined,
+			context("anthropic"),
+		)).rejects.toThrow("Native search requires the openai-codex provider");
 	});
 });

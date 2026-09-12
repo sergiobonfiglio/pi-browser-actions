@@ -49,6 +49,48 @@ function parseSearchResult(value: unknown): SearchResult | undefined {
 	};
 }
 
+export function extractBraveResults(value: unknown, limit: number): SearchResult[] {
+	if (!value || typeof value !== "object") return [];
+	const web = (value as Record<string, unknown>).web;
+	if (!web || typeof web !== "object") return [];
+	const results = (web as Record<string, unknown>).results;
+	if (!Array.isArray(results)) return [];
+
+	return results
+		.map((result) => {
+			if (!result || typeof result !== "object") return undefined;
+			const candidate = result as Record<string, unknown>;
+			return parseSearchResult({
+				title: candidate.title,
+				url: candidate.url,
+				snippet: candidate.description,
+			});
+		})
+		.filter((result): result is SearchResult => result !== undefined)
+		.slice(0, limit);
+}
+
+export async function searchBrave(
+	query: string,
+	limit: number,
+	apiKey: string,
+	signal?: AbortSignal,
+): Promise<SearchResult[]> {
+	const url = new URL("https://api.search.brave.com/res/v1/web/search");
+	url.searchParams.set("q", query);
+	url.searchParams.set("count", String(limit));
+	const timeout = AbortSignal.timeout(10_000);
+	const response = await fetch(url, {
+		headers: {
+			accept: "application/json",
+			"x-subscription-token": apiKey,
+		},
+		signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+	});
+	if (!response.ok) throw new Error(`Brave Search API returned HTTP ${response.status}`);
+	return extractBraveResults(JSON.parse(await readResponseTextWithLimit(response)), limit);
+}
+
 function unwrapDuckDuckGoUrl(href: string): string {
 	try {
 		const url = new URL(href, "https://duckduckgo.com");

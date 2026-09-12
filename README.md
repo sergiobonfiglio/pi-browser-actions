@@ -95,9 +95,21 @@ CDP attachment requires Chrome or Edge to expose a remote-debugging endpoint. Br
 
 ### `web_search`
 
-When the current provider is `openai-codex`, search uses OpenAI's native web-search capability and returns a concise cited summary with `source: "openai-codex-native"`. If native search fails, or when any other provider is active, it uses DuckDuckGo HTML and returns structured titles, URLs, and snippets.
+In the default `auto` mode, an `openai-codex` model uses OpenAI's native web-search capability first. Search then uses the Brave Search API when `BRAVE_SEARCH_API_KEY` is set, and falls back to DuckDuckGo HTML when the preceding provider is unavailable, fails, or returns no results.
 
-The search engine behind OpenAI's native search is not exposed by its API. DuckDuckGo HTML can change and responses are limited to 2 MB.
+```bash
+export BRAVE_SEARCH_API_KEY="your-api-key"
+```
+
+Set `provider` to call one implementation without fallback, which is useful for testing:
+
+```json
+{ "query": "Pi coding agent", "provider": "brave", "maxResults": 5 }
+```
+
+Supported values are `auto`, `native`, `brave`, and `duckduckgo`. `native` requires the current model provider to be `openai-codex`; `brave` requires `BRAVE_SEARCH_API_KEY`. Native search returns a concise cited summary, while Brave and DuckDuckGo return structured titles, URLs, and snippets.
+
+The search engine behind OpenAI's native search is not exposed by its API. Brave and DuckDuckGo responses are limited to 2 MB, and DuckDuckGo's HTML can change.
 
 ## Isolation and trust model
 

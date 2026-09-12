@@ -1,12 +1,47 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+	extractBraveResults,
 	extractDuckDuckGoResults,
 	formatSearchResults,
 	MAX_SEARCH_RESPONSE_BYTES,
 	readResponseTextWithLimit,
+	searchBrave,
 } from "../src/search.ts";
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe("web search parsing", () => {
+	it("extracts and limits Brave API results", () => {
+		expect(extractBraveResults({
+			web: {
+				results: [
+					{ title: "Example docs", url: "https://example.com/docs", description: "Documentation snippet." },
+					{ title: "Example article", url: "https://example.org/article", description: "Article snippet." },
+				],
+			},
+		}, 1)).toEqual([
+			{
+				title: "Example docs",
+				url: "https://example.com/docs",
+				snippet: "Documentation snippet.",
+			},
+		]);
+	});
+
+	it("calls the Brave Search API with its subscription token", async () => {
+		const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+			web: { results: [{ title: "Example", url: "https://example.com", description: "Snippet" }] },
+		})));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(searchBrave("example query", 3, "secret")).resolves.toHaveLength(1);
+		const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit];
+		expect(String(url)).toBe("https://api.search.brave.com/res/v1/web/search?q=example+query&count=3");
+		expect(init).toEqual(expect.objectContaining({
+			headers: { accept: "application/json", "x-subscription-token": "secret" },
+		}));
+	});
+
 	it("extracts DuckDuckGo HTML results and unwraps redirect URLs", () => {
 		const html = `
 			<div class="result">
