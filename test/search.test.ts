@@ -42,7 +42,7 @@ describe("web search parsing", () => {
 		}));
 	});
 
-	it("extracts DuckDuckGo HTML results and unwraps redirect URLs", () => {
+	it("extracts DuckDuckGo HTML results and unwraps redirect URLs", async () => {
 		const html = `
 			<div class="result">
 				<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fdocs">Example docs</a>
@@ -53,7 +53,7 @@ describe("web search parsing", () => {
 				<div class="result__snippet">Article snippet.</div>
 			</div>`;
 
-		expect(extractDuckDuckGoResults(html, 1)).toEqual([
+		await expect(extractDuckDuckGoResults(html, 1)).resolves.toEqual([
 			{
 				title: "Example docs",
 				url: "https://example.com/docs",

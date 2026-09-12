@@ -1,5 +1,3 @@
-import { JSDOM } from "jsdom";
-
 export interface SearchResult {
 	title: string;
 	url: string;
@@ -100,7 +98,8 @@ function unwrapDuckDuckGoUrl(href: string): string {
 	}
 }
 
-export function extractDuckDuckGoResults(html: string, limit: number): SearchResult[] {
+export async function extractDuckDuckGoResults(html: string, limit: number): Promise<SearchResult[]> {
+	const { JSDOM } = await import("jsdom");
 	const document = new JSDOM(html, { url: "https://html.duckduckgo.com" }).window.document;
 	const results: SearchResult[] = [];
 
@@ -144,7 +143,7 @@ export async function searchDuckDuckGo(query: string, limit: number, signal?: Ab
 			const url = `${endpoint}?q=${encodeURIComponent(query)}`;
 			const response = await fetch(url, { headers, signal: combinedSignal });
 			if (!response.ok || response.status === 202) continue;
-			const results = extractDuckDuckGoResults(await readResponseTextWithLimit(response), limit);
+			const results = await extractDuckDuckGoResults(await readResponseTextWithLimit(response), limit);
 			if (results.length > 0) return results;
 		} catch (error) {
 			if (signal?.aborted) throw error;

@@ -13,9 +13,7 @@ import {
 	type ToolExecutionMode,
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import sharp from "sharp";
 import { Type } from "typebox";
-import { readRenderedPageDataFile, renderedPageToMarkdown } from "./markdown.ts";
 import { searchOpenAICodexNative } from "./native-search.ts";
 import {
 	collectOutputMetadata,
@@ -381,6 +379,7 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 						ownership,
 					} satisfies BrowserDetails,
 				});
+				const { readRenderedPageDataFile, renderedPageToMarkdown } = await import("./markdown.ts");
 				const pageData = await readRenderedPageDataFile(join(current, invocation.pageDataRelativePath));
 				const extraction = renderedPageToMarkdown(pageData);
 				extractedPage = { title: extraction.title, url: extraction.url };
@@ -411,6 +410,7 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 			const content: Array<TextContent | ImageContent> = [{ type: "text", text }];
 			let screenshot: BrowserDetails["screenshot"];
 			if (invocation.attachImage && artifactPath) {
+				const { default: sharp } = await import("sharp");
 				const fullImage = await readFile(artifactPath);
 				const fullMetadata = await sharp(fullImage).metadata();
 				const previewPath = join(current, "artifacts", `screenshot-preview-${currentArtifactId}.jpeg`);
