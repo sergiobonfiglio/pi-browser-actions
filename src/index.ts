@@ -55,24 +55,22 @@ const SearchParameters = Type.Object({
 	maxResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "Maximum results; defaults to 8." })),
 });
 const SessionParameters = Type.Object({
-	action: StringEnum(SESSION_ACTIONS, {
-		description: "Session operation. Open or attach before using the browser tool; close or detach when finished.",
-	}),
-	url: Type.Optional(Type.String({ description: "Initial URL for open; a compatible repeated open navigates here." })),
-	name: Type.Optional(Type.String({ description: "Named session target for attach; omit for other attach modes." })),
-	cdpEndpoint: Type.Optional(Type.String({ description: "CDP target for attach; omit for other attach modes." })),
-	browserServerEndpoint: Type.Optional(Type.String({ description: "Browser-server target for attach." })),
-	attachViaExtension: Type.Optional(Type.Boolean({ description: "Use extension attachment as the sole attach target." })),
+	action: StringEnum(SESSION_ACTIONS),
+	url: Type.Optional(Type.String()),
+	name: Type.Optional(Type.String()),
+	cdpEndpoint: Type.Optional(Type.String()),
+	browserServerEndpoint: Type.Optional(Type.String()),
+	attachViaExtension: Type.Optional(Type.Boolean()),
 	browser: Type.Optional(
 		StringEnum(["chrome", "firefox", "webkit", "msedge"] as const, {
-			description: "Browser for open, or Chrome/Edge channel for extension attachment.",
+			description: "Browser for launch; Chrome or Edge for extension attachment.",
 		}),
 	),
-	device: Type.Optional(Type.String({ description: "Playwright device for open, such as iPhone 15." })),
-	headed: Type.Optional(Type.Boolean({ description: "Open a visible browser window." })),
-	mobile: Type.Optional(Type.Boolean({ description: "Use lightweight mobile emulation for open." })),
+	device: Type.Optional(Type.String({ description: "Playwright device preset, e.g. iPhone 15." })),
+	headed: Type.Optional(Type.Boolean()),
+	mobile: Type.Optional(Type.Boolean()),
 	timeoutMs: Type.Optional(
-		Type.Integer({ minimum: 1000, maximum: 180000, description: "Override the 60-second startup timeout." }),
+		Type.Integer({ minimum: 1000, maximum: 180000, description: "Startup timeout in ms; default 60000." }),
 	),
 });
 const BrowserParameters = Type.Object({
@@ -204,7 +202,7 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 		name: "browser_session",
 		label: "Browser Session",
 		description:
-			"Manage a Playwright browser session for web interaction and frontend testing: open, attach, list, close, or detach. Open or attach to enable browser controls.",
+			"Manage Playwright sessions for web interaction and frontend testing. Attach by name, CDP, browser-server endpoint, or browser extension.",
 		promptSnippet: "Start a Playwright browser session for web interaction and frontend testing",
 		promptGuidelines: [
 			"Use browser_session with action=open or action=attach to enable browser controls; use action=close for launched sessions and action=detach for attached sessions when finished.",

@@ -144,6 +144,7 @@ describe("extension boundary", () => {
 		expect(browserProperties).not.toHaveProperty("browser");
 		expect(sessionProperties).toHaveProperty("cdpEndpoint");
 		expect(Object.keys(sessionProperties).length).toBeLessThanOrEqual(11);
+		expect(Object.values(sessionProperties).filter((property) => typeof (property as any).description === "string")).toHaveLength(3);
 		expect(harness.tools.flatMap((registered) => registered.promptGuidelines ?? []).join("\n")).not.toContain(
 			"headless_browser",
 		);
