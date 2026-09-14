@@ -35,7 +35,7 @@ const theme = {
 } as Theme;
 
 function rendered(component: { render(width: number): string[] }): string {
-	return component.render(200).join("\n");
+	return component.render(200).join("\n").trimEnd();
 }
 
 describe("web search routing", () => {
@@ -64,15 +64,30 @@ describe("web search routing", () => {
 		expect(expanded).toContain("Native summary https://example.com");
 	});
 
-	it("falls back to DuckDuckGo when native search fails", async () => {
+	it("updates the renderer when native search falls back to DuckDuckGo", async () => {
 		const nativeSearch = vi.fn(async () => { throw new Error("native unavailable"); });
 		const duckDuckGo = vi.fn(async () => [result]);
-		const tool = registerWebSearch({ searchOpenAICodexNative: nativeSearch, searchDuckDuckGo: duckDuckGo });
+		const tool = registerWebSearch({
+			searchOpenAICodexNative: nativeSearch,
+			searchDuckDuckGo: duckDuckGo,
+			braveApiKey: "",
+		});
+		const updates: any[] = [];
 
-		const response = await tool.execute("call", { query: "example" }, undefined, undefined, context("openai-codex"));
+		const response = await tool.execute(
+			"call",
+			{ query: "example" },
+			undefined,
+			(update: any) => updates.push(update),
+			context("openai-codex"),
+		);
 
 		expect(response.details.source).toBe("duckduckgo");
 		expect(duckDuckGo).toHaveBeenCalledOnce();
+		expect(updates.map((update) => update.details.source)).toEqual(["openai-codex-native", "duckduckgo"]);
+		expect(updates.map((update) => rendered(
+			tool.renderResult(update, { expanded: false, isPartial: true }, theme, { isError: false }),
+		))).toEqual(["Searching via OpenAI Codex…", "Searching via DuckDuckGo…"]);
 	});
 
 	it("uses Brave before DuckDuckGo in auto mode", async () => {
@@ -87,16 +102,27 @@ describe("web search routing", () => {
 		expect(duckDuckGo).not.toHaveBeenCalled();
 	});
 
-	it("falls back to DuckDuckGo when Brave fails in auto mode", async () => {
+	it("updates the renderer when Brave falls back to DuckDuckGo", async () => {
 		const brave = vi.fn(async () => { throw new Error("brave unavailable"); });
 		const duckDuckGo = vi.fn(async () => [result]);
 		const tool = registerWebSearch({ searchBrave: brave, searchDuckDuckGo: duckDuckGo, braveApiKey: "secret" });
+		const updates: any[] = [];
 
-		const response = await tool.execute("call", { query: "example" }, undefined, undefined, context("anthropic"));
+		const response = await tool.execute(
+			"call",
+			{ query: "example" },
+			undefined,
+			(update: any) => updates.push(update),
+			context("anthropic"),
+		);
 
 		expect(response.details.source).toBe("duckduckgo");
 		expect(brave).toHaveBeenCalledOnce();
 		expect(duckDuckGo).toHaveBeenCalledOnce();
+		expect(updates.map((update) => update.details.source)).toEqual(["brave", "duckduckgo"]);
+		expect(updates.map((update) => rendered(
+			tool.renderResult(update, { expanded: false, isPartial: true }, theme, { isError: false }),
+		))).toEqual(["Searching via Brave…", "Searching via DuckDuckGo…"]);
 	});
 
 	it("uses an explicitly selected DuckDuckGo without calling Brave", async () => {

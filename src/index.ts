@@ -135,6 +135,13 @@ interface SearchDetails {
 	results: SearchResult[];
 }
 
+function searchProviderLabel(source: string): string {
+	if (source === "openai-codex-native") return "OpenAI Codex";
+	if (source === "brave") return "Brave";
+	if (source === "duckduckgo") return "DuckDuckGo";
+	return "the web";
+}
+
 function sessionName(): string {
 	return `pi-${process.pid}-${randomUUID().slice(0, 8)}`;
 }
@@ -492,9 +499,9 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 			const query = params.query.trim();
 			if (!query) throw new Error("Search query must not be empty");
 			const maxResults = params.maxResults ?? 8;
-			onUpdate?.({
-				content: [{ type: "text", text: `Searching the web for: ${query}` }],
-				details: { query, source: "pending", results: [] },
+			const updateProvider = (source: string) => onUpdate?.({
+				content: [{ type: "text", text: `Searching via ${searchProviderLabel(source)} for: ${query}` }],
+				details: { query, source, results: [] } satisfies SearchDetails,
 			});
 
 			const provider = params.provider ?? "auto";
@@ -503,6 +510,7 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 				throw new Error("Native search requires the openai-codex provider");
 			}
 			if (provider === "native" || (provider === "auto" && ctx.model?.provider === "openai-codex")) {
+				updateProvider("openai-codex-native");
 				try {
 					const auth = await ctx.modelRegistry.getProviderAuth("openai-codex");
 					const apiKey = auth?.auth.apiKey;
@@ -531,6 +539,7 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 			let braveFailure = braveApiKey?.trim() ? "no results" : "BRAVE_SEARCH_API_KEY is not set";
 			if (provider === "brave" && !braveApiKey?.trim()) throw new Error(braveFailure);
 			if ((provider === "auto" || provider === "brave") && braveApiKey?.trim()) {
+				updateProvider("brave");
 				try {
 					results = await braveSearch(query, maxResults, braveApiKey, signal);
 				} catch (error) {
@@ -549,6 +558,7 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 
 			let duckDuckGoFailure = "no results";
 			if (provider === "auto" || provider === "duckduckgo") {
+				updateProvider("duckduckgo");
 				try {
 					results = await duckDuckGoSearch(query, maxResults, signal);
 				} catch (error) {
@@ -580,8 +590,10 @@ export default function browserActionsExtension(pi: ExtensionAPI, options: Brows
 		},
 
 		renderResult(result, { expanded, isPartial }, theme, context) {
-			if (isPartial) return new Text(theme.fg("warning", "Searching…"), 0, 0);
 			const details = result.details as SearchDetails | undefined;
+			if (isPartial) {
+				return new Text(theme.fg("warning", `Searching via ${searchProviderLabel(details?.source ?? "")}…`), 0, 0);
+			}
 			const prefix = context.isError ? theme.fg("error", "✗ ") : theme.fg("success", "✓ ");
 			const summary = details?.source === "openai-codex-native"
 				? "native summary via openai-codex"
