@@ -1,6 +1,7 @@
+import { readFile } from "node:fs/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
-import browserActionsExtension from "../src/index.ts";
+import browserActionsExtension, { type BrowserActionsExtensionOptions } from "../src/index.ts";
 import type { CliProcessResult } from "../src/runtime.ts";
 
 interface RegisteredTool {
@@ -31,7 +32,7 @@ function result(code: number, stdout = "", stderr = ""): CliProcessResult {
 	return { code, stdout, stderr, killed: false };
 }
 
-function createHarness(): Harness {
+function createHarness(fetchWebPage?: BrowserActionsExtensionOptions["fetchWebPage"]): Harness {
 	const tools: RegisteredTool[] = [];
 	const calls: string[][] = [];
 	let activeTools: string[] = [];
@@ -90,6 +91,7 @@ function createHarness(): Harness {
 			if (releaseResult) sessionAvailable = false;
 			return releaseResult;
 		},
+		fetchWebPage,
 	});
 	sessionStart();
 
@@ -135,6 +137,7 @@ describe("extension boundary", () => {
 			"browser_session",
 			"browser",
 			"web_search",
+			"web_fetch",
 		]);
 		const browserProperties = tool(harness, "browser").parameters?.properties ?? {};
 		const sessionProperties = tool(harness, "browser_session").parameters?.properties ?? {};
@@ -156,11 +159,35 @@ describe("extension boundary", () => {
 
 	it("activates browser controls after opening a session", async () => {
 		const harness = createHarness();
-		expect(harness.getActiveTools()).toEqual(["browser_session", "web_search"]);
+		expect(harness.getActiveTools()).toEqual(["browser_session", "web_search", "web_fetch"]);
 
 		await execute(tool(harness, "browser_session"), { action: "open" });
 
-		expect(harness.getActiveTools()).toEqual(["browser_session", "web_search", "browser"]);
+		expect(harness.getActiveTools()).toEqual(["browser_session", "web_search", "web_fetch", "browser"]);
+	});
+
+	it("truncates oversized fetch output and preserves the full result in a temporary artifact", async () => {
+		const fullContent = "x".repeat(60 * 1024);
+		const harness = createHarness(async ({ url, format }) => ({
+			requestedUrl: url,
+			url,
+			status: 200,
+			contentType: format === "html" ? "text/html" : "text/plain",
+			format: format ?? "markdown",
+			bytes: Buffer.byteLength(fullContent),
+			content: fullContent,
+		}));
+
+		const response = await execute(tool(harness, "web_fetch"), {
+			url: "https://example.com/large",
+			format: "html",
+		});
+		const artifactPath = response.details.artifactPath as string;
+
+		expect(response.content[0].text).toContain("Output truncated");
+		expect(response.content[0].text).toContain(artifactPath);
+		expect(response.details.output.truncated).toBe(true);
+		expect(await readFile(artifactPath, "utf8")).toBe(fullContent);
 	});
 
 	it("reuses a compatible open and navigates instead of reopening", async () => {

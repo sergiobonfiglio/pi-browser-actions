@@ -39,6 +39,11 @@ function rendered(component: { render(width: number): string[] }): string {
 }
 
 describe("web search routing", () => {
+	it("allows independent searches to execute in parallel", () => {
+		const tool = registerWebSearch({});
+		expect(tool.executionMode).toBe("parallel");
+	});
+
 	it("uses explicitly selected native search for the openai-codex provider", async () => {
 		const nativeSearch = vi.fn(async () => "Native summary https://example.com");
 		const duckDuckGo = vi.fn(async () => [result]);

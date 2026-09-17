@@ -1,7 +1,7 @@
 {
   "name": "pi-browser-actions",
   "version": "1.0.2",
-  "description": "Stateful Playwright browser automation for Pi with headed or headless launch, browser attachment, web search, rendering, and Markdown extraction.",
+  "description": "Stateful Playwright browser automation for Pi with headed or headless launch, browser attachment, web search, exact URL fetching, rendering, and Markdown extraction.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -10,7 +10,8 @@
     "browser",
     "playwright",
     "automation",
-    "web-search"
+    "web-search",
+    "web-fetch"
   ],
   "exports": "./index.ts",
   "files": [

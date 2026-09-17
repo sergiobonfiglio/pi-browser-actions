@@ -1,6 +1,6 @@
 # pi-browser-actions
 
-Stateful Playwright browser automation for [Pi](https://github.com/earendil-works/pi-mono). Open a headed or headless browser, attach to an existing browser, interact with pages, inspect frontend behavior, render artifacts, extract readable Markdown, and search the web.
+Stateful Playwright browser automation for [Pi](https://github.com/earendil-works/pi-mono). Open a headed or headless browser, attach to an existing browser, interact with pages, inspect frontend behavior, render artifacts, extract readable Markdown, fetch exact URLs, and search the web.
 
 ## Install
 
@@ -111,6 +111,20 @@ Supported values are `auto`, `native`, `brave`, and `duckduckgo`. `native` requi
 
 The search engine behind OpenAI's native search is not exposed by its API. Brave and DuckDuckGo responses are limited to 2 MB, and DuckDuckGo's HTML can change.
 
+### `web_fetch`
+
+Fetches a known public HTTP(S) URL directly without starting a browser. Markdown is returned by default; use `format: "html"` when the raw response body is needed:
+
+```json
+{ "url": "https://example.com/docs", "format": "markdown" }
+```
+
+```json
+{ "url": "https://example.com/docs", "format": "html" }
+```
+
+HTML Markdown extraction uses the same local Readability and Turndown pipeline as `browser`'s `extract_markdown`. Results over 50 KB are truncated in the model-facing response and preserved in a temporary artifact; fetched response bodies are limited to 5 MB and the default request timeout is 30 seconds. Use `browser` instead for JavaScript-rendered pages, authentication, or interaction. Fetched content is untrusted.
+
 ## Isolation and trust model
 
 Pi extensions execute arbitrary code with the user's full system permissions. Install this package only from a source you trust and review changes before upgrading.
@@ -121,8 +135,8 @@ Uploads are the intentional exception: relative paths resolve against Pi's proje
 
 This package is an automation tool, not a security sandbox:
 
-- Pages, search results, console messages, and extracted Markdown are untrusted data.
-- Browser actions can reach localhost and private-network services available from the host.
+- Pages, fetched content, search results, console messages, and extracted Markdown are untrusted data.
+- Browser actions and `web_fetch` can reach localhost and private-network services available from the host.
 - `eval` and `run_code` can inspect and act through the current browser session, including its cookies and storage.
 - Saved authentication state remains sensitive for the lifetime of the Pi session.
 
