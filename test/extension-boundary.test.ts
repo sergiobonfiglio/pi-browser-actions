@@ -6,6 +6,7 @@ import type { CliProcessResult } from "../src/runtime.ts";
 
 interface RegisteredTool {
 	name: string;
+	executionMode?: string;
 	description?: string;
 	parameters?: { properties?: Record<string, unknown> };
 	promptGuidelines?: string[];
@@ -164,6 +165,34 @@ describe("extension boundary", () => {
 		await execute(tool(harness, "browser_session"), { action: "open" });
 
 		expect(harness.getActiveTools()).toEqual(["browser_session", "web_search", "web_fetch", "browser"]);
+	});
+
+	it("runs oversized fetches in parallel with isolated temporary artifacts", async () => {
+		const harness = createHarness(async ({ url, format }) => ({
+			requestedUrl: url,
+			url,
+			status: 200,
+			contentType: "text/plain",
+			format: format ?? "markdown",
+			bytes: 60 * 1024,
+			content: url.includes("one") ? "1".repeat(60 * 1024) : "2".repeat(60 * 1024),
+		}));
+		const fetchTool = tool(harness, "web_fetch");
+		expect(fetchTool.executionMode).toBe("parallel");
+
+		const [first, second] = await Promise.all([
+			execute(fetchTool, { url: "https://example.com/one" }),
+			execute(fetchTool, { url: "https://example.com/two" }),
+		]);
+		const firstArtifact = first.details.artifactPath as string;
+		const secondArtifact = second.details.artifactPath as string;
+		expect(firstArtifact).not.toBe(secondArtifact);
+		expect(await readFile(firstArtifact, "utf8")).toBe("1".repeat(60 * 1024));
+		expect(await readFile(secondArtifact, "utf8")).toBe("2".repeat(60 * 1024));
+
+		await harness.shutdown();
+		await expect(readFile(firstArtifact, "utf8")).rejects.toThrow();
+		await expect(readFile(secondArtifact, "utf8")).rejects.toThrow();
 	});
 
 	it("truncates oversized fetch output and preserves the full result in a temporary artifact", async () => {
